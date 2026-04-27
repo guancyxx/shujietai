@@ -134,6 +134,8 @@ body {
 
 .kpi-corner {
   margin-top: auto;
+  margin-bottom: 0;
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
@@ -166,8 +168,17 @@ body {
 .state-panel {
   padding: 14px;
   min-height: 0;
-  overflow-y: auto;
   overflow-x: hidden;
+}
+
+.tasks-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.state-panel {
+  overflow-y: auto;
 }
 
 .timeline-panel {
@@ -187,6 +198,10 @@ h2 {
 .lanes {
   display: grid;
   gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
 }
 
 .lane {
