@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -42,15 +43,62 @@ def health() -> dict[str, str]:
     return {"status": "healthy", "service": "shujietai-backend"}
 
 
-def ask_hermes_response(prompt: str) -> str:
+def _build_history_messages(history_messages: list[dict[str, str]], user_message: str) -> list[dict[str, str]]:
+    messages = [
+        {
+            "role": message["role"],
+            "content": message["content"],
+        }
+        for message in history_messages
+        if message.get("role") in {"system", "user", "assistant"} and message.get("content")
+    ]
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+def _ask_hermes_via_api(messages: list[dict[str, str]]) -> str:
+    base_url = os.getenv("HERMES_API_BASE_URL", "http://host.docker.internal:8642/v1").rstrip("/")
+    api_key = os.getenv("HERMES_API_KEY", "")
+    model = os.getenv("HERMES_MODEL", "gpt-5.3-codex")
+    timeout_seconds = float(os.getenv("HERMES_API_TIMEOUT_SECONDS", "120"))
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    response = httpx.post(
+        f"{base_url}/chat/completions",
+        headers=headers,
+        json={"model": model, "messages": messages},
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+
+    payload = response.json()
+    content = payload.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    if not content:
+        raise RuntimeError("hermes_empty_response")
+    return content
+
+
+def _ask_hermes_via_cli(messages: list[dict[str, str]]) -> str:
     from subprocess import run
 
     hermes_bin = os.getenv("HERMES_BIN", "hermes")
+    timeout_seconds = float(os.getenv("HERMES_API_TIMEOUT_SECONDS", "120"))
+
+    prompt_lines: list[str] = ["Conversation history:"]
+    for message in messages[:-1]:
+        prompt_lines.append(f"{message['role']}: {message['content']}")
+    prompt_lines.append("Now reply to the latest user message:")
+    prompt_lines.append(messages[-1]["content"])
+    prompt = "\n".join(prompt_lines)
+
     result = run(
         [hermes_bin, "-z", prompt],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=int(timeout_seconds),
         check=False,
     )
     if result.returncode != 0:
@@ -59,6 +107,18 @@ def ask_hermes_response(prompt: str) -> str:
     if not content:
         raise RuntimeError("hermes_empty_response")
     return content
+
+
+def ask_hermes_response(history_messages: list[dict[str, str]], user_message: str) -> str:
+    messages = _build_history_messages(history_messages, user_message)
+
+    try:
+        return _ask_hermes_via_api(messages)
+    except httpx.HTTPError:
+        cli_fallback_enabled = os.getenv("HERMES_CLI_FALLBACK_ENABLED", "1") == "1"
+        if not cli_fallback_enabled:
+            raise
+        return _ask_hermes_via_cli(messages)
 
 
 def _ingest_and_build_response(payload: IngestEventRequest, request: Request) -> IngestEventResponse:
@@ -102,8 +162,9 @@ def ingest_hermes_webhook(payload: HermesWebhookEventRequest, request: Request) 
 
 @app.post("/api/v1/connectors/hermes/chat", response_model=HermesChatResponse)
 def hermes_chat(payload: HermesChatRequest, request: Request) -> HermesChatResponse:
+    history_messages = store.get_history_messages("hermes", payload.external_session_id)
     try:
-        assistant_message = ask_hermes_response(payload.user_message)
+        assistant_message = ask_hermes_response(history_messages, payload.user_message)
     except Exception as exc:
         raise HTTPException(status_code=502, detail="hermes_unavailable") from exc
 

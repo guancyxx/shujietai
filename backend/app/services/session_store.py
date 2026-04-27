@@ -171,6 +171,18 @@ class SessionStore:
             events=self._events.get(session_id, []),
         )
 
+    def get_history_messages(self, platform: str, external_session_id: str) -> list[dict[str, str]]:
+        with self._lock:
+            session_id = self._session_id_by_external.get((platform, external_session_id))
+            if session_id is None:
+                return []
+
+            history: list[dict[str, str]] = []
+            for message in self._messages.get(session_id, []):
+                if message.role in ("user", "assistant", "system"):
+                    history.append({"role": message.role, "content": message.content})
+            return history
+
     def get_cockpit(self, session_id: str) -> CockpitResponse | None:
         session = self.get_session(session_id)
         timeline = self.get_timeline(session_id)

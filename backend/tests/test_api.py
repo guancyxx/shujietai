@@ -1,3 +1,4 @@
+import httpx
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -107,8 +108,9 @@ def test_hermes_webhook_ingest_message_event() -> None:
 
 
 def test_hermes_chat_endpoint_creates_user_and_assistant_messages(monkeypatch) -> None:
-    def fake_ask_hermes(prompt: str) -> str:
-        assert "What is your name?" in prompt
+    def fake_ask_hermes(history_messages: list[dict[str, str]], user_message: str) -> str:
+        assert history_messages == []
+        assert user_message == "What is your name?"
         return "I am Hermes."
 
     monkeypatch.setattr("app.main.ask_hermes_response", fake_ask_hermes)
@@ -139,7 +141,7 @@ def test_hermes_chat_endpoint_creates_user_and_assistant_messages(monkeypatch) -
 
 
 def test_hermes_chat_endpoint_returns_502_when_hermes_unavailable(monkeypatch) -> None:
-    def fake_ask_hermes(_: str) -> str:
+    def fake_ask_hermes(_: list[dict[str, str]], __: str) -> str:
         raise RuntimeError("hermes_failed")
 
     monkeypatch.setattr("app.main.ask_hermes_response", fake_ask_hermes)
@@ -155,3 +157,144 @@ def test_hermes_chat_endpoint_returns_502_when_hermes_unavailable(monkeypatch) -
 
     assert response.status_code == 502
     assert response.json()["detail"] == "hermes_unavailable"
+
+
+def test_hermes_chat_endpoint_reuses_session_history_on_next_turn(monkeypatch) -> None:
+    captured_histories: list[list[dict[str, str]]] = []
+
+    def fake_ask_hermes(history_messages: list[dict[str, str]], user_message: str) -> str:
+        captured_histories.append(history_messages)
+        return f"echo:{user_message}"
+
+    monkeypatch.setattr("app.main.ask_hermes_response", fake_ask_hermes)
+
+    first = client.post(
+        "/api/v1/connectors/hermes/chat",
+        json={
+            "external_session_id": "hermes_chat_history_sess_1",
+            "title": "Hermes Chat History",
+            "user_message": "first",
+        },
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/api/v1/connectors/hermes/chat",
+        json={
+            "external_session_id": "hermes_chat_history_sess_1",
+            "title": "Hermes Chat History",
+            "user_message": "second",
+        },
+    )
+    assert second.status_code == 200
+
+    assert len(captured_histories) == 2
+    assert captured_histories[0] == []
+    assert captured_histories[1] == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "echo:first"},
+    ]
+
+
+def test_ask_hermes_response_openai_api_success(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "api ok",
+                        }
+                    }
+                ]
+            }
+
+    captured: dict = {}
+
+    def fake_post(url: str, headers: dict, json: dict, timeout: float):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setenv("HERMES_API_BASE_URL", "http://localhost:8642/v1")
+    monkeypatch.setenv("HERMES_API_KEY", "test-key")
+    monkeypatch.setenv("HERMES_MODEL", "gpt-5.3-codex")
+    monkeypatch.setenv("HERMES_API_TIMEOUT_SECONDS", "33")
+    monkeypatch.setattr("app.main.httpx.post", fake_post)
+
+    from app.main import ask_hermes_response
+
+    result = ask_hermes_response(
+        [{"role": "assistant", "content": "history"}],
+        "new question",
+    )
+
+    assert result == "api ok"
+    assert captured["url"] == "http://localhost:8642/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["json"]["model"] == "gpt-5.3-codex"
+    assert captured["json"]["messages"][-1] == {"role": "user", "content": "new question"}
+    assert captured["timeout"] == 33.0
+
+
+def test_ask_hermes_response_raises_on_empty_content(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return
+
+        def json(self) -> dict:
+            return {"choices": [{"message": {"content": "   "}}]}
+
+    monkeypatch.setattr("app.main.httpx.post", lambda *args, **kwargs: FakeResponse())
+
+    from app.main import ask_hermes_response
+
+    try:
+        ask_hermes_response([], "ping")
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert str(exc) == "hermes_empty_response"
+
+
+def test_ask_hermes_response_propagates_http_error(monkeypatch) -> None:
+    def fake_post(*args, **kwargs):
+        raise httpx.HTTPStatusError(
+            "bad gateway",
+            request=httpx.Request("POST", "http://localhost:8642/v1/chat/completions"),
+            response=httpx.Response(502),
+        )
+
+    monkeypatch.setenv("HERMES_CLI_FALLBACK_ENABLED", "0")
+    monkeypatch.setattr("app.main.httpx.post", fake_post)
+
+    from app.main import ask_hermes_response
+
+    try:
+        ask_hermes_response([], "ping")
+        assert False, "expected HTTPStatusError"
+    except httpx.HTTPStatusError as exc:
+        assert exc.response.status_code == 502
+
+
+def test_ask_hermes_response_falls_back_to_cli_when_api_unavailable(monkeypatch) -> None:
+    def fake_post(*args, **kwargs):
+        raise httpx.ConnectError("unreachable")
+
+    monkeypatch.setenv("HERMES_CLI_FALLBACK_ENABLED", "1")
+    monkeypatch.setattr("app.main.httpx.post", fake_post)
+
+    def fake_cli(messages: list[dict[str, str]]) -> str:
+        assert messages[-1] == {"role": "user", "content": "ping"}
+        return "cli ok"
+
+    monkeypatch.setattr("app.main._ask_hermes_via_cli", fake_cli)
+
+    from app.main import ask_hermes_response
+
+    result = ask_hermes_response([], "ping")
+    assert result == "cli ok"
