@@ -27,82 +27,9 @@ class SessionStore:
         self._events: dict[str, list[EventItem]] = {}
         self._tasks: dict[str, list[TaskItem]] = {}
         self._metrics: dict[str, SessionMetrics] = {}
-        self._seed_demo_data()
 
     def _now(self) -> datetime:
         return datetime.now(UTC)
-
-    def _seed_demo_data(self) -> None:
-        session_id = "sess_demo_1"
-        started_at = self._now()
-        self._session_id_by_external[("hermes", "hermes_demo_1")] = session_id
-        self._sessions[session_id] = SessionDetail(
-            id=session_id,
-            platform="hermes",
-            external_session_id="hermes_demo_1",
-            title="Demo Session",
-            status="active",
-            started_at=started_at,
-            message_count=2,
-            task_count=2,
-        )
-        self._messages[session_id] = [
-            MessageItem(
-                id=f"msg_{uuid4().hex[:10]}",
-                session_id=session_id,
-                role="user",
-                content="Summarize today priorities",
-                content_type="text/plain",
-                created_at=started_at,
-                meta_json={"platform": "hermes"},
-            ),
-            MessageItem(
-                id=f"msg_{uuid4().hex[:10]}",
-                session_id=session_id,
-                role="assistant",
-                content="Top priorities are planning, implementation and verification.",
-                content_type="text/plain",
-                created_at=self._now(),
-                meta_json={"platform": "hermes"},
-            ),
-        ]
-        self._events[session_id] = [
-            EventItem(
-                id="evt_demo_1",
-                session_id=session_id,
-                event_type="session_started",
-                payload_json={"source": "seed"},
-                created_at=started_at,
-            )
-        ]
-        self._tasks[session_id] = [
-            TaskItem(
-                id="task_demo_1",
-                session_id=session_id,
-                title="Finalize MVP design",
-                lane="done",
-                priority=1,
-                assignee="owner",
-                updated_at=self._now(),
-            ),
-            TaskItem(
-                id="task_demo_2",
-                session_id=session_id,
-                title="Bootstrap project skeleton",
-                lane="doing",
-                priority=1,
-                assignee="owner",
-                updated_at=self._now(),
-            ),
-        ]
-        self._metrics[session_id] = SessionMetrics(
-            session_id=session_id,
-            token_in=1240,
-            token_out=980,
-            latency_ms_p50=430,
-            error_count=0,
-            updated_at=self._now(),
-        )
 
     def ingest(self, payload: IngestEventRequest) -> tuple[str, bool]:
         with self._lock:
