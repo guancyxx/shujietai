@@ -6,7 +6,13 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.schemas import IngestEventRequest, IngestEventResponse
+from app.schemas import (
+    HermesChatRequest,
+    HermesChatResponse,
+    HermesWebhookEventRequest,
+    IngestEventRequest,
+    IngestEventResponse,
+)
 from app.services.cockpit_service import get_cockpit_by_session
 from app.services.session_store import store
 
@@ -36,8 +42,26 @@ def health() -> dict[str, str]:
     return {"status": "healthy", "service": "shujietai-backend"}
 
 
-@app.post("/api/v1/events/ingest", response_model=IngestEventResponse)
-def ingest_event(payload: IngestEventRequest, request: Request) -> IngestEventResponse:
+def ask_hermes_response(prompt: str) -> str:
+    from subprocess import run
+
+    hermes_bin = os.getenv("HERMES_BIN", "hermes")
+    result = run(
+        [hermes_bin, "-z", prompt],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("hermes_command_failed")
+    content = result.stdout.strip()
+    if not content:
+        raise RuntimeError("hermes_empty_response")
+    return content
+
+
+def _ingest_and_build_response(payload: IngestEventRequest, request: Request) -> IngestEventResponse:
     session_id, duplicate = store.ingest(payload)
     request_id = request.headers.get("x-request-id", str(uuid4()))
     return IngestEventResponse(
@@ -45,6 +69,74 @@ def ingest_event(payload: IngestEventRequest, request: Request) -> IngestEventRe
         duplicate=duplicate,
         session_id=session_id,
         event_id=payload.event_id,
+    )
+
+
+@app.post("/api/v1/events/ingest", response_model=IngestEventResponse)
+def ingest_event(payload: IngestEventRequest, request: Request) -> IngestEventResponse:
+    return _ingest_and_build_response(payload, request)
+
+
+@app.post("/api/v1/connectors/hermes/webhook", response_model=IngestEventResponse)
+def ingest_hermes_webhook(payload: HermesWebhookEventRequest, request: Request) -> IngestEventResponse:
+    ingest_message = None
+    if payload.message is not None:
+        ingest_message = {
+            "role": payload.message.role,
+            "content": payload.message.content,
+            "content_type": payload.message.content_type,
+            "meta_json": payload.message.meta_json,
+        }
+
+    ingest_payload = IngestEventRequest(
+        platform="hermes",
+        event_id=payload.event_id,
+        event_type=payload.event_type,
+        external_session_id=payload.external_session_id,
+        title=payload.title,
+        payload_json={**payload.payload_json, "meta": payload.meta},
+        message=ingest_message,
+    )
+    return _ingest_and_build_response(ingest_payload, request)
+
+
+@app.post("/api/v1/connectors/hermes/chat", response_model=HermesChatResponse)
+def hermes_chat(payload: HermesChatRequest, request: Request) -> HermesChatResponse:
+    try:
+        assistant_message = ask_hermes_response(payload.user_message)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="hermes_unavailable") from exc
+
+    user_event_id = f"evt_user_{uuid4().hex}"
+    user_ingest = IngestEventRequest(
+        platform="hermes",
+        event_id=user_event_id,
+        event_type="message_created",
+        external_session_id=payload.external_session_id,
+        title=payload.title,
+        payload_json={"source": "shujietai-chat"},
+        message={"role": "user", "content": payload.user_message},
+    )
+    session_id, _ = store.ingest(user_ingest)
+
+    assistant_event_id = f"evt_assistant_{uuid4().hex}"
+    assistant_ingest = IngestEventRequest(
+        platform="hermes",
+        event_id=assistant_event_id,
+        event_type="message_created",
+        external_session_id=payload.external_session_id,
+        title=payload.title,
+        payload_json={"source": "shujietai-chat"},
+        message={"role": "assistant", "content": assistant_message},
+    )
+    store.ingest(assistant_ingest)
+
+    request_id = request.headers.get("x-request-id", str(uuid4()))
+    return HermesChatResponse(
+        request_id=request_id,
+        session_id=session_id,
+        event_id=assistant_event_id,
+        assistant_message=assistant_message,
     )
 
 

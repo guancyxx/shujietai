@@ -39,10 +39,17 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:15173}
       WORKSPACE_TOKEN: ${WORKSPACE_TOKEN:-dev-workspace-token}
       PYTHONPATH: /app
+      HOME: /home/guancy
+      HERMES_BIN: ${HERMES_BIN:-/usr/local/bin/hermes}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
+      - ${HERMES_CLI_PATH:-/home/guancy/.local/bin/hermes}:/usr/local/bin/hermes:ro
+      - ${HERMES_AGENT_ROOT:-/home/guancy/.hermes/hermes-agent}:/home/guancy/.hermes/hermes-agent:ro
+      - ${HERMES_HOME_DIR:-/home/guancy/.hermes}:/home/guancy/.hermes
+      - ${HERMES_HOME_DIR:-/home/guancy/.hermes}:/root/.hermes
+      - ${HERMES_UV_ROOT:-/home/guancy/.local/share/uv}:/home/guancy/.local/share/uv:ro
     depends_on:
       postgres:
         condition: service_healthy

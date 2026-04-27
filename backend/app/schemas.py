@@ -42,6 +42,37 @@ class IngestEventResponse(BaseModel):
     event_id: str
 
 
+class HermesWebhookMessagePayload(BaseModel):
+    id: str | None = None
+    role: MessageRole
+    content: str
+    content_type: str = "text/plain"
+    meta_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class HermesWebhookEventRequest(BaseModel):
+    event_id: str
+    event_type: str
+    external_session_id: str
+    title: str | None = None
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    message: HermesWebhookMessagePayload | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class HermesChatRequest(BaseModel):
+    external_session_id: str
+    user_message: str = Field(min_length=1, max_length=8000)
+    title: str | None = None
+
+
+class HermesChatResponse(BaseModel):
+    request_id: str
+    session_id: str
+    event_id: str
+    assistant_message: str
+
+
 class SessionSummary(BaseModel):
     id: str
     platform: str

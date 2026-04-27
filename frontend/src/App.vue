@@ -9,6 +9,8 @@ const timeline = ref({ messages: [], events: [] })
 const cockpit = ref(null)
 const loading = ref(false)
 const errorMessage = ref('')
+const sending = ref(false)
+const composerText = ref('')
 
 const selectedSession = computed(() => sessions.value.find((s) => s.id === selectedSessionId.value) || null)
 
@@ -65,6 +67,18 @@ async function fetchJson(url) {
   return response.json()
 }
 
+async function postJson(url, payload) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`)
+  }
+  return response.json()
+}
+
 async function loadSessions() {
   const data = await fetchJson(`${apiBase}/api/v1/sessions`)
   sessions.value = data
@@ -98,6 +112,40 @@ async function refreshData() {
   }
 }
 
+async function sendMessageToHermes() {
+  const trimmed = composerText.value.trim()
+  if (!trimmed || sending.value) {
+    return
+  }
+
+  sending.value = true
+  errorMessage.value = ''
+  try {
+    const externalSessionId = selectedSession.value?.external_session_id || `web_${Date.now()}`
+    const payload = {
+      external_session_id: externalSessionId,
+      title: selectedSession.value?.title || 'Web Chat Session',
+      user_message: trimmed,
+    }
+    await postJson(`${apiBase}/api/v1/connectors/hermes/chat`, payload)
+    composerText.value = ''
+    await loadSessions()
+    if (!selectedSessionId.value && sessions.value.length > 0) {
+      selectedSessionId.value = sessions.value[0].id
+    } else if (selectedSession.value?.external_session_id !== externalSessionId) {
+      const matched = sessions.value.find((item) => item.external_session_id === externalSessionId)
+      if (matched) {
+        selectedSessionId.value = matched.id
+      }
+    }
+    await loadSessionData()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
+  } finally {
+    sending.value = false
+  }
+}
+
 onMounted(refreshData)
 </script>
 
@@ -116,12 +164,7 @@ onMounted(refreshData)
         </div>
 
         <div class="toolbar">
-          <select v-model="selectedSessionId" class="input" @change="refreshData">
-            <option v-for="session in sessions" :key="session.id" :value="session.id">
-              {{ session.title }} ({{ session.platform }})
-            </option>
-          </select>
-          <button class="refresh" :disabled="loading" @click="refreshData">{{ loading ? '刷新中...' : '刷新' }}</button>
+          <div v-if="selectedSession" class="session-chip">{{ selectedSession.title }} ({{ selectedSession.platform }})</div>
         </div>
       </header>
 
@@ -169,6 +212,18 @@ onMounted(refreshData)
             <div class="timeline-meta">{{ new Date(message.created_at).toLocaleString() }}</div>
             <div class="timeline-content">{{ message.content }}</div>
           </div>
+
+          <form class="chat-composer" @submit.prevent="sendMessageToHermes">
+            <textarea
+              v-model="composerText"
+              class="composer-input"
+              :disabled="sending"
+              placeholder="输入消息，直接与 Hermes 对话"
+            ></textarea>
+            <button class="composer-send" type="submit" :disabled="sending || !composerText.trim()">
+              {{ sending ? '发送中...' : '发送' }}
+            </button>
+          </form>
         </article>
 
         <article class="panel state-panel">
