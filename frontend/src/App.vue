@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 
 const sessions = ref([])
 const selectedSessionId = ref('')
@@ -11,6 +11,19 @@ const loading = ref(false)
 const errorMessage = ref('')
 
 const selectedSession = computed(() => sessions.value.find((s) => s.id === selectedSessionId.value) || null)
+
+const laneTitleMap = {
+  todo: '待处理',
+  doing: '进行中',
+  done: '已完成',
+}
+
+const roleLabelMap = {
+  user: '用户',
+  assistant: '助手',
+  system: '系统',
+  tool: '工具',
+}
 
 const taskLanes = computed(() => {
   const laneMap = { todo: [], doing: [], done: [] }
@@ -22,6 +35,27 @@ const taskLanes = computed(() => {
   }
   return laneMap
 })
+
+const sessionSummary = computed(() => {
+  const session = cockpit.value?.session
+  const metrics = cockpit.value?.metrics
+  return {
+    messages: session?.message_count ?? 0,
+    tasks: session?.task_count ?? 0,
+    tokenIn: metrics?.token_in ?? 0,
+    tokenOut: metrics?.token_out ?? 0,
+    latency: metrics?.latency_ms_p50 ?? 0,
+    errors: metrics?.error_count ?? 0,
+  }
+})
+
+function laneClass(lane) {
+  return `lane-${lane}`
+}
+
+function roleClass(role) {
+  return `role-${role || 'assistant'}`
+}
 
 async function fetchJson(url) {
   const response = await fetch(url)
@@ -68,78 +102,87 @@ onMounted(refreshData)
 </script>
 
 <template>
-  <main class="page">
-    <header class="header">
-      <div>
-        <h1 class="title">枢界台 · 会话驾驶舱</h1>
-        <p class="subtitle">Hermes / OpenClaw unified cockpit MVP</p>
-      </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <select v-model="selectedSessionId" class="refresh" @change="refreshData">
-          <option v-for="session in sessions" :key="session.id" :value="session.id">
-            {{ session.title }} ({{ session.platform }})
-          </option>
-        </select>
-        <button class="refresh" :disabled="loading" @click="refreshData">{{ loading ? 'Loading...' : 'Refresh' }}</button>
-      </div>
-    </header>
+  <main class="app-shell">
+    <div class="bg-layer"></div>
 
-    <div v-if="errorMessage" class="error">{{ errorMessage }}</div>
-
-    <section class="grid">
-      <article class="panel">
-        <h2>任务栏</h2>
-        <div class="lanes">
-          <div class="lane">
-            <h3>ToDo</h3>
-            <div v-for="task in taskLanes.todo" :key="task.id" class="task">
-              <div>{{ task.title }}</div>
-              <div class="muted">Priority {{ task.priority }}</div>
-            </div>
-            <div v-if="taskLanes.todo.length === 0" class="muted">No tasks</div>
+    <section class="cockpit-wrap">
+      <header class="topbar panel">
+        <div class="brand-block">
+          <div class="brand-title-row">
+            <img class="brand-logo" src="/src/assets/logo-sjt-a3-icon.svg" alt="枢界台 Logo" />
+            <h1 class="title">枢界台 · 会话驾驶舱</h1>
           </div>
-
-          <div class="lane">
-            <h3>Doing</h3>
-            <div v-for="task in taskLanes.doing" :key="task.id" class="task">
-              <div>{{ task.title }}</div>
-              <div class="muted">Priority {{ task.priority }}</div>
-            </div>
-            <div v-if="taskLanes.doing.length === 0" class="muted">No tasks</div>
-          </div>
-
-          <div class="lane">
-            <h3>Done</h3>
-            <div v-for="task in taskLanes.done" :key="task.id" class="task">
-              <div>{{ task.title }}</div>
-              <div class="muted">Priority {{ task.priority }}</div>
-            </div>
-            <div v-if="taskLanes.done.length === 0" class="muted">No tasks</div>
-          </div>
+          <p class="subtitle">全屏自适应 · 多平台对话任务看板</p>
         </div>
-      </article>
 
-      <article class="panel">
-        <h2>对话时间线</h2>
-        <div v-if="timeline.messages?.length === 0" class="muted">No messages</div>
-        <div v-for="message in timeline.messages" :key="message.id" class="timeline-item">
-          <div class="timeline-role">{{ message.role }} · {{ new Date(message.created_at).toLocaleString() }}</div>
-          <div class="timeline-content">{{ message.content }}</div>
+        <div class="toolbar">
+          <select v-model="selectedSessionId" class="input" @change="refreshData">
+            <option v-for="session in sessions" :key="session.id" :value="session.id">
+              {{ session.title }} ({{ session.platform }})
+            </option>
+          </select>
+          <button class="refresh" :disabled="loading" @click="refreshData">{{ loading ? '刷新中...' : '刷新' }}</button>
         </div>
-      </article>
+      </header>
 
-      <article class="panel">
-        <h2>状态面板</h2>
-        <div class="kv"><span class="muted">Session</span><span>{{ selectedSession?.title || '-' }}</span></div>
-        <div class="kv"><span class="muted">Platform</span><span>{{ selectedSession?.platform || '-' }}</span></div>
-        <div class="kv"><span class="muted">Messages</span><span>{{ cockpit?.session?.message_count ?? 0 }}</span></div>
-        <div class="kv"><span class="muted">Tasks</span><span>{{ cockpit?.session?.task_count ?? 0 }}</span></div>
-        <hr style="border-color:#263a58; opacity:0.5;" />
-        <div class="kv"><span class="muted">Token In</span><span>{{ cockpit?.metrics?.token_in ?? 0 }}</span></div>
-        <div class="kv"><span class="muted">Token Out</span><span>{{ cockpit?.metrics?.token_out ?? 0 }}</span></div>
-        <div class="kv"><span class="muted">Latency P50</span><span>{{ cockpit?.metrics?.latency_ms_p50 ?? 0 }} ms</span></div>
-        <div class="kv"><span class="muted">Errors</span><span>{{ cockpit?.metrics?.error_count ?? 0 }}</span></div>
-      </article>
+      <div v-if="errorMessage" class="error panel">{{ errorMessage }}</div>
+
+      <section class="main-grid">
+        <article class="panel tasks-panel">
+          <h2>任务看板</h2>
+          <div class="lanes">
+            <div v-for="lane in ['todo', 'doing', 'done']" :key="lane" class="lane" :class="laneClass(lane)">
+              <h3>{{ laneTitleMap[lane] }}</h3>
+              <div v-for="task in taskLanes[lane]" :key="task.id" class="task">
+                <div class="task-title">{{ task.title }}</div>
+                <div class="muted">优先级 {{ task.priority }}</div>
+              </div>
+              <div v-if="taskLanes[lane].length === 0" class="muted">暂无任务</div>
+            </div>
+          </div>
+
+          <section class="kpi-corner panel-soft">
+            <article class="kpi-mini">
+              <div class="kpi-label">消息数</div>
+              <div class="kpi-value">{{ sessionSummary.messages }}</div>
+            </article>
+            <article class="kpi-mini">
+              <div class="kpi-label">任务数</div>
+              <div class="kpi-value">{{ sessionSummary.tasks }}</div>
+            </article>
+            <article class="kpi-mini">
+              <div class="kpi-label">延迟 P50</div>
+              <div class="kpi-value">{{ sessionSummary.latency }} ms</div>
+            </article>
+            <article class="kpi-mini">
+              <div class="kpi-label">错误数</div>
+              <div class="kpi-value">{{ sessionSummary.errors }}</div>
+            </article>
+          </section>
+        </article>
+
+        <article class="panel timeline-panel">
+          <h2>对话时间线</h2>
+          <div v-if="timeline.messages?.length === 0" class="muted">暂无消息</div>
+          <div v-for="message in timeline.messages" :key="message.id" class="timeline-item">
+            <div class="role-chip" :class="roleClass(message.role)">{{ roleLabelMap[message.role] || message.role }}</div>
+            <div class="timeline-meta">{{ new Date(message.created_at).toLocaleString() }}</div>
+            <div class="timeline-content">{{ message.content }}</div>
+          </div>
+        </article>
+
+        <article class="panel state-panel">
+          <h2>会话状态</h2>
+          <div class="kv"><span class="muted">会话</span><span>{{ selectedSession?.title || '-' }}</span></div>
+          <div class="kv"><span class="muted">平台</span><span>{{ selectedSession?.platform || '-' }}</span></div>
+          <div class="kv"><span class="muted">Token In</span><span>{{ sessionSummary.tokenIn }}</span></div>
+          <div class="kv"><span class="muted">Token Out</span><span>{{ sessionSummary.tokenOut }}</span></div>
+          <div class="kv"><span class="muted">延迟 P50</span><span>{{ sessionSummary.latency }} ms</span></div>
+          <div class="kv"><span class="muted">错误数</span><span>{{ sessionSummary.errors }}</span></div>
+          <hr class="sep" />
+          <div class="next-step">下一步建议：优先清理进行中任务并继续拉取最新会话事件。</div>
+        </article>
+      </section>
     </section>
   </main>
 </template>
