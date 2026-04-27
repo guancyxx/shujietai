@@ -36,7 +36,7 @@ services:
     environment:
       BACKEND_HOST: ${BACKEND_HOST:-0.0.0.0}
       BACKEND_PORT: ${BACKEND_PORT:-8000}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:15173}
+      CORS_ORIGINS: http://localhost:15173,http://127.0.0.1:15173
       WORKSPACE_TOKEN: ${WORKSPACE_TOKEN:-dev-workspace-token}
       PYTHONPATH: /app
       HOME: /home/guancy

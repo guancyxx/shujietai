@@ -59,6 +59,10 @@ function roleClass(role) {
   return `role-${role || 'assistant'}`
 }
 
+function messageSideClass(role) {
+  return role === 'user' ? 'msg-user' : 'msg-assistant'
+}
+
 async function fetchJson(url) {
   const response = await fetch(url)
   if (!response.ok) {
@@ -206,11 +210,19 @@ onMounted(refreshData)
 
         <article class="panel timeline-panel">
           <h2>对话时间线</h2>
-          <div v-if="timeline.messages?.length === 0" class="muted">暂无消息</div>
-          <div v-for="message in timeline.messages" :key="message.id" class="timeline-item">
-            <div class="role-chip" :class="roleClass(message.role)">{{ roleLabelMap[message.role] || message.role }}</div>
-            <div class="timeline-meta">{{ new Date(message.created_at).toLocaleString() }}</div>
-            <div class="timeline-content">{{ message.content }}</div>
+
+          <div class="timeline-scroll">
+            <div v-if="timeline.messages?.length === 0" class="muted">暂无消息</div>
+            <div
+              v-for="message in timeline.messages"
+              :key="message.id"
+              class="timeline-item"
+              :class="messageSideClass(message.role)"
+            >
+              <div class="role-chip" :class="roleClass(message.role)">{{ roleLabelMap[message.role] || message.role }}</div>
+              <div class="timeline-meta">{{ new Date(message.created_at).toLocaleString() }}</div>
+              <div class="timeline-content">{{ message.content }}</div>
+            </div>
           </div>
 
           <form class="chat-composer" @submit.prevent="sendMessageToHermes">
