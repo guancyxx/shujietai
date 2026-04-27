@@ -133,13 +133,17 @@ body {
 }
 
 .kpi-corner {
-  margin-top: auto;
-  margin-bottom: 0;
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  margin: 0;
   flex-shrink: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   padding: 10px;
+  z-index: 2;
 }
 
 .panel-soft {
@@ -172,6 +176,7 @@ body {
 }
 
 .tasks-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -202,6 +207,7 @@ h2 {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+  padding-bottom: 196px;
 }
 
 .lane {
@@ -463,6 +469,15 @@ h2 {
   }
 
   .kpi-corner {
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
     grid-template-columns: 1fr;
+  }
+
+  .lanes {
+    padding-bottom: 12px;
   }
 }
