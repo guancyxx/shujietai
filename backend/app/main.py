@@ -15,7 +15,9 @@ from app.schemas import (
     IngestEventResponse,
 )
 from app.services.cockpit_service import get_cockpit_by_session
-from app.services.session_store import store
+from app.services.store_factory import build_store
+
+store = build_store()
 
 app = FastAPI(title="ShuJieTai API", version="0.1.0")
 
@@ -224,7 +226,7 @@ def get_timeline(session_id: str):
 
 @app.get("/api/v1/board/cockpit")
 def get_cockpit(session_id: str):
-    cockpit = get_cockpit_by_session(session_id)
+    cockpit = get_cockpit_by_session(store, session_id)
     if cockpit is None:
         raise HTTPException(status_code=404, detail="session_not_found")
     return cockpit
