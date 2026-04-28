@@ -87,6 +87,10 @@ Sessions list:
 
 curl -sS http://127.0.0.1:18000/api/v1/sessions
 
+DLQ list:
+
+curl -sS http://127.0.0.1:18000/api/v1/dlq
+
 ## Alembic Commands
 
 Apply latest migration:
@@ -153,6 +157,7 @@ Mount-related:
 
 - docs/superpowers/specs/2026-04-27-shujietai-mvp-design.md
 - docs/plans/2026-04-27-shujietai-mvp-implementation-plan.md
+- docs/adr/0001-mvp-store-and-connector-extension.md
 - docs/status/2026-04-28-project-status.md
 - docs/status/2026-04-28-sqlalchemy-cutover-runbook.md
 - docs/status/2026-04-28-implementation-timeline.md
