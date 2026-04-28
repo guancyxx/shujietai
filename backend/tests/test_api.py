@@ -12,6 +12,12 @@ def test_health() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "healthy"
+    assert "metrics" in payload
+    assert set(payload["metrics"].keys()) == {
+        "ingest_success_total",
+        "ingest_retry_total",
+        "ingest_dlq_total",
+    }
 
 
 def test_list_sessions_returns_empty_initially() -> None:

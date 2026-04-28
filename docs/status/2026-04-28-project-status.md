@@ -2,96 +2,89 @@
 
 Date: 2026-04-28
 
-## 1) What is running now
+## 1) Scope baseline locked
 
-Compose services are up and healthy:
+In scope this round:
+- MVP keeps Hermes as the only implemented connector
+- Connector architecture remains extension-ready
+- SQLAlchemy persistence becomes default runtime path
+- Alembic baseline migration is required
+- Retry + DLQ ingest reliability is required
+- DLQ replay audit fields + filtered list/replay-force operations are included
+
+Out of scope this round:
+- OpenClaw connector implementation
+- Security middleware hardening (workspace token verification upgrade)
+
+## 2) What is running now
+
+Compose services:
 - shujietai-backend
 - shujietai-frontend
-- shujietai-postgres (healthy)
-- shujietai-redis (healthy)
+- shujietai-postgres
+- shujietai-redis
 
 Observed host mappings:
 - backend: 18000 -> 8000
 - frontend: 15173 -> 5173
 
-## 2) Verified checks performed
+## 3) Completed capabilities in this iteration
+
+Backend and storage:
+- Store factory defaults to SQLAlchemy backend
+- In-memory backend kept as fallback option
+- Alembic migrations added under backend/alembic:
+  - 20260428_0001 baseline schema
+  - 20260428_0002 DLQ replay audit fields
+- Migration roundtrip test added (upgrade -> downgrade -> upgrade)
+- Persistence restart test added (data survives store recreation)
+
+Reliability:
+- Ingest retry queue table and DLQ table added
+- Retry state machine service added
+- Configurable retry settings (enabled/max retries/delay schedule/loop interval)
+- In-process retry worker loop added for MVP
+- DLQ API operations added:
+  - list dead letters with filters (only_unreplayed/platform/since)
+  - replay dead letter with optional force mode and operator identity
+- Replay audit fields tracked on DLQ rows: replay_count/replayed_at/replayed_by
+- Health endpoint now exposes ingest_success_total / ingest_retry_total / ingest_dlq_total counters
+
+Connector scope:
+- Hermes webhook + chat paths preserved and compatible
+- OpenClaw still deferred as planned
+
+## 4) Verification checks executed
 
 Commands executed:
-- docker compose ps
+- docker compose build backend
 - docker compose run --rm backend pytest -q
-- curl -sS http://127.0.0.1:18000/api/v1/health
-- curl -sS http://127.0.0.1:18000/api/v1/sessions
 
-Results:
-- backend tests: 17 passed
-- health endpoint: healthy
-- sessions endpoint: empty array on fresh memory state
+Result:
+- backend tests: 34 passed
 
-## 3) Implemented capabilities
+## 5) Remaining gaps versus long-term design
 
-Backend:
-- Canonical ingest and query APIs for MVP
-- Request-id propagation middleware
-- CORS config via environment variable
-- In-memory session/event/message/task/metrics store
-- Optional SQLAlchemy-backed session/event/message/task/metrics store
-- Idempotency by (platform, event_id)
+Pending after this round:
+- OpenClaw connector and contract fixtures
+- Redis-backed cache/realtime application path
+- Security baseline hardening and auth middleware expansion
+- Retry worker extraction to external queue workers (optional future scaling step)
 
-Hermes connector path:
-- /api/v1/connectors/hermes/webhook for normalized webhook ingest
-- /api/v1/connectors/hermes/chat for direct chat relay
-- OpenAI-compatible API call path
-- Optional CLI fallback when API path fails
+## 6) Risk notes
 
-Frontend:
-- Three-column cockpit layout
-- Session selection + timeline rendering
-- Task lane rendering (todo/doing/done)
-- Session metrics cards and state panel
-- Composer for direct Hermes chat via backend
+- Retry worker currently runs in backend process; restart pauses retry loop until service recovers
+- Health counters are in-process counters and reset on backend restart
+- Replay audit fields are persisted, but replay history is aggregated on-row (not append-only event log)
 
-## 4) Gaps versus MVP design target
+## 7) Recommended next step order
 
-From design docs, these are still pending:
-- OpenClaw connector implementation
-- Production-grade PostgreSQL migration and cutover verification under compose runtime
-- Redis-backed cache/realtime behavior in app path
-- Retry strategy and dead-letter queue for failed ingest
-- Security hardening beyond CORS and env-based keying
+1. Connector extension implementation (OpenClaw)
+2. Security baseline upgrade
+3. Replay history externalization (append-only audit trail) if compliance requires finer traceability
+4. Retry worker externalization if throughput increases
 
-## 5) Risks and constraints
+## 8) Timeline document
 
-- Data durability risk: default memory mode loses session data on backend restart unless SQLAlchemy store is enabled.
-- Integration risk: current connector scope is Hermes-only.
-- Reliability risk: ingest path lacks retry/dead-letter mechanics.
-
-## 6) Recommended next-step options
-
-Option A (recommended first): Persistence hardening and cutover verification
-- Keep store factory + SQLAlchemy store as baseline
-- Add compose-level cutover runbook (memory -> sqlalchemy)
-- Add restart-persistence verification checklist
-- Add repository interface split for sessions/messages/events/tasks/metrics
-
-Option B: Connector expansion
-- Implement OpenClaw connector adapter + normalization mapping
-- Add contract tests with fixture payloads
-
-Option C: Reliability hardening
-- Add retry policy and dead-letter storage for ingest failures
-- Add observability counters and error surfaces
-
-Option D: Security baseline upgrade
-- Add workspace token validation middleware
-- Add endpoint-level auth checks and audit logs
-
-## 7) Suggested execution order
-
-1. Option A (persistence)
-2. Option C (reliability)
-3. Option B (OpenClaw)
-4. Option D (security)
-
-Reasoning:
-- Persistence and reliability reduce operational risk before widening platform surface.
-- Connector expansion after persistence avoids a second migration wave.
+For a change-log style delivery timeline, see:
+- docs/status/2026-04-28-implementation-timeline.md

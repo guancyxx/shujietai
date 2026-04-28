@@ -136,3 +136,35 @@ class CockpitResponse(BaseModel):
     tasks: list[TaskItem]
     timeline: TimelineResponse
     metrics: SessionMetrics
+
+
+class DeadLetterItem(BaseModel):
+    id: str
+    event_id: str
+    platform: str
+    external_session_id: str
+    event_type: str
+    request_id: str
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    message_json: dict[str, Any] | None = None
+    task_json: dict[str, Any] | None = None
+    error_message: str
+    attempt_count: int
+    replay_count: int = 0
+    replayed_at: datetime | None = None
+    replayed_by: str | None = None
+    created_at: datetime
+
+
+class DeadLetterListResponse(BaseModel):
+    items: list[DeadLetterItem]
+
+
+class DeadLetterReplayResponse(BaseModel):
+    id: str
+    status: Literal["replayed", "failed"]
+    detail: str
+
+
+class DeadLetterReplayRequest(BaseModel):
+    force: bool = False

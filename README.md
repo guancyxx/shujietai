@@ -8,27 +8,24 @@ Implemented:
 - Docker Compose one-command startup for full stack
 - Backend API based on FastAPI
 - Frontend cockpit UI based on Vue 3
-- In-memory session store with idempotent ingest logic
-- Optional SQLAlchemy store (configurable by env)
-- Store factory-based backend wiring (memory/sqlalchemy switch without API contract change)
+- Store factory with default SQLAlchemy backend (memory backend kept for fallback)
+- Alembic migration baseline + replay-audit migration, with roundtrip migration tests
 - Hermes connector endpoints:
   - webhook ingest
   - direct chat relay (OpenAI-compatible API + CLI fallback)
-- Health checks for postgres and redis in compose
-- Backend test suite (17 tests) covering core MVP paths, store factory, and SQLAlchemy store baseline
+- Retry + DLQ pipeline for ingest failures (configurable)
+- Health metrics for ingest success/retry/dlq counters
+- Backend test suite (34 tests)
 
-Not implemented yet:
-- OpenClaw connector
-- Production-grade PostgreSQL repository migration completeness (currently optional SQLAlchemy store path)
-- Redis cache/realtime layer in application path
-- Retry + dead-letter pipeline for failed ingest
-- RBAC and workspace token verification middleware
+Deferred in this round:
+- OpenClaw connector implementation (extension points preserved)
+- Security baseline middleware (workspace token verification hardening)
 
 ## Service Topology
 
 - frontend: Vue 3 + Vite cockpit UI
 - backend: FastAPI API server
-- postgres: reserved for future persistence migration
+- postgres: persistent storage
 - redis: reserved for future cache/realtime migration
 
 ## Quick Start
@@ -65,6 +62,8 @@ Core MVP:
 - GET /api/v1/sessions/{id}/timeline
 - GET /api/v1/board/cockpit?session_id=...
 - GET /api/v1/health
+- GET /api/v1/dlq (filters: limit, only_unreplayed, platform, since)
+- POST /api/v1/dlq/{dlq_id}/replay (optional header: x-replayed-by; optional body: {"force": true})
 
 Hermes-specific:
 - POST /api/v1/connectors/hermes/webhook
@@ -88,6 +87,38 @@ Sessions list:
 
 curl -sS http://127.0.0.1:18000/api/v1/sessions
 
+## Alembic Commands
+
+Apply latest migration:
+
+docker compose run --rm backend alembic upgrade head
+
+Rollback to base:
+
+docker compose run --rm backend alembic downgrade base
+
+Roundtrip check on ephemeral sqlite:
+
+docker compose run --rm backend sh -lc 'DATABASE_URL=sqlite+pysqlite:///tmp/alembic_check.db alembic upgrade head && DATABASE_URL=sqlite+pysqlite:///tmp/alembic_check.db alembic downgrade base && DATABASE_URL=sqlite+pysqlite:///tmp/alembic_check.db alembic upgrade head'
+
+## Retry and DLQ
+
+Configuration:
+- INGEST_RETRY_ENABLED
+- INGEST_MAX_RETRIES
+- INGEST_RETRY_DELAYS
+- INGEST_RETRY_LOOP_INTERVAL_SECONDS
+
+Behavior:
+- ingest write failures are queued for retry
+- retry backoff defaults: 1s, 3s, 10s
+- after max retries, event is moved to dead_letter_events
+- dead letters can be listed via GET /api/v1/dlq
+- list supports filters: only_unreplayed, platform, since (ISO8601)
+- a dead letter can be replayed via POST /api/v1/dlq/{dlq_id}/replay
+- replay does not delete DLQ record; audit fields are updated (replay_count, replayed_at, replayed_by)
+- replay of an already replayed item requires force=true in request body
+
 ## Environment Variables (high impact)
 
 Backend and frontend:
@@ -97,6 +128,12 @@ Backend and frontend:
 - FRONTEND_PORT
 - VITE_API_BASE_URL
 - CORS_ORIGINS
+
+Reliability:
+- INGEST_RETRY_ENABLED
+- INGEST_MAX_RETRIES
+- INGEST_RETRY_DELAYS
+- INGEST_RETRY_LOOP_INTERVAL_SECONDS
 
 Hermes relay:
 - HERMES_API_BASE_URL
@@ -112,21 +149,10 @@ Mount-related:
 - HERMES_HOME_DIR
 - HERMES_UV_ROOT
 
-## Architecture Notes
-
-The current backend defaults to an in-memory store for delivery speed, while preserving stable request/response contracts to reduce migration risk.
-
-A store factory (`app/services/store_factory.py`) selects the store backend at startup, enabling controlled cutover without changing API handlers.
-
-An optional SQLAlchemy-backed store is available and can be enabled by setting:
-- SESSION_STORE_BACKEND=sqlalchemy
-- DATABASE_URL=postgresql+psycopg2://...
-
-Migration direction is documented in:
-- docs/adr/0001-mvp-store-and-connector-extension.md
-
 ## Additional Project Docs
 
 - docs/superpowers/specs/2026-04-27-shujietai-mvp-design.md
 - docs/plans/2026-04-27-shujietai-mvp-implementation-plan.md
 - docs/status/2026-04-28-project-status.md
+- docs/status/2026-04-28-sqlalchemy-cutover-runbook.md
+- docs/status/2026-04-28-implementation-timeline.md

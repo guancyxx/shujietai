@@ -4,11 +4,12 @@ from datetime import UTC, datetime
 from threading import Lock
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, create_engine, select
+from sqlalchemy import create_engine, select
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
-from sqlalchemy.types import JSON
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.db.base import Base
+from app.db.models import EventEntity, MessageEntity, SessionEntity, SessionMetricsEntity, TaskEntity
 from app.schemas import (
     CockpitResponse,
     EventItem,
@@ -22,77 +23,12 @@ from app.schemas import (
 )
 
 
-class Base(DeclarativeBase):
-    pass
-
-
-class SessionEntity(Base):
-    __tablename__ = "sessions"
-    __table_args__ = (UniqueConstraint("platform", "external_session_id", name="uq_sessions_platform_external"),)
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    platform: Mapped[str] = mapped_column(String(64), nullable=False)
-    external_session_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    task_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-
-class EventEntity(Base):
-    __tablename__ = "events"
-    __table_args__ = (UniqueConstraint("platform", "id", name="uq_events_platform_id"),)
-
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    platform: Mapped[str] = mapped_column(String(64), nullable=False)
-    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class MessageEntity(Base):
-    __tablename__ = "messages"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    role: Mapped[str] = mapped_column(String(32), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    content_type: Mapped[str] = mapped_column(String(64), nullable=False, default="text/plain")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    meta_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-
-
-class TaskEntity(Base):
-    __tablename__ = "tasks"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    lane: Mapped[str] = mapped_column(String(16), nullable=False, default="todo")
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
-    assignee: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class SessionMetricsEntity(Base):
-    __tablename__ = "session_metrics"
-
-    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    token_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    token_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    latency_ms_p50: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
 class SqlAlchemySessionStore:
     def __init__(self, database_url: str) -> None:
         self._lock = Lock()
         self._engine = self._build_engine(database_url)
-        Base.metadata.create_all(self._engine)
+        if database_url.startswith("sqlite"):
+            Base.metadata.create_all(self._engine)
         self._session_factory = sessionmaker(self._engine, expire_on_commit=False)
 
     def _build_engine(self, database_url: str) -> Engine:
@@ -105,7 +41,11 @@ class SqlAlchemySessionStore:
             return create_engine(database_url, **engine_kwargs)
         return create_engine(database_url)
 
-    def _now(self) -> datetime:
+    @property
+    def session_factory(self) -> sessionmaker:
+        return self._session_factory
+
+    def now(self) -> datetime:
         return datetime.now(UTC)
 
     def ingest(self, payload: IngestEventRequest) -> tuple[str, bool]:
@@ -116,15 +56,16 @@ class SqlAlchemySessionStore:
                 if duplicate is not None and duplicate.platform == payload.platform:
                     return session_entity.id, True
 
-                event = EventEntity(
-                    id=payload.event_id,
-                    platform=payload.platform,
-                    session_id=session_entity.id,
-                    event_type=payload.event_type,
-                    payload_json=payload.payload_json,
-                    created_at=self._now(),
+                db.add(
+                    EventEntity(
+                        id=payload.event_id,
+                        platform=payload.platform,
+                        session_id=session_entity.id,
+                        event_type=payload.event_type,
+                        payload_json=payload.payload_json,
+                        created_at=self.now(),
+                    )
                 )
-                db.add(event)
 
                 if payload.message is not None:
                     db.add(
@@ -134,7 +75,7 @@ class SqlAlchemySessionStore:
                             role=payload.message.role,
                             content=payload.message.content,
                             content_type=payload.message.content_type,
-                            created_at=self._now(),
+                            created_at=self.now(),
                             meta_json=payload.message.meta_json,
                         )
                     )
@@ -148,7 +89,7 @@ class SqlAlchemySessionStore:
                             lane=payload.task.lane,
                             priority=payload.task.priority,
                             assignee=payload.task.assignee,
-                            updated_at=self._now(),
+                            updated_at=self.now(),
                         )
                     )
 
@@ -172,7 +113,7 @@ class SqlAlchemySessionStore:
             external_session_id=payload.external_session_id,
             title=payload.title or f"Session {payload.external_session_id}",
             status="active",
-            started_at=self._now(),
+            started_at=self.now(),
             ended_at=None,
             message_count=0,
             task_count=0,
@@ -185,7 +126,7 @@ class SqlAlchemySessionStore:
                 token_out=0,
                 latency_ms_p50=0,
                 error_count=0,
-                updated_at=self._now(),
+                updated_at=self.now(),
             )
         )
         return session
@@ -199,7 +140,7 @@ class SqlAlchemySessionStore:
                 token_out=0,
                 latency_ms_p50=0,
                 error_count=0,
-                updated_at=self._now(),
+                updated_at=self.now(),
             )
             db.add(metrics)
 
@@ -207,7 +148,7 @@ class SqlAlchemySessionStore:
         metrics.token_in += 10
         metrics.token_out += 8
         metrics.latency_ms_p50 = max(100, 100 + event_count * 5)
-        metrics.updated_at = self._now()
+        metrics.updated_at = self.now()
 
     def _refresh_counts(self, db: Session, session_id: str) -> None:
         session = db.get(SessionEntity, session_id)
