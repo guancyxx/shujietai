@@ -754,27 +754,19 @@ async function startConversationFromTask(task) {
     activePage.value = 'chat'
     await loadSessionData()
 
-    // 3. Try to get assistant response in background (non-blocking)
+    // 3. Try to get assistant response (best-effort, non-blocking)
+    //    Send a brief prompt; do NOT re-send system_prompt or duplicate user_message
+    //    since they were already ingested into the session history.
     try {
       const chatPayload = {
         external_session_id: externalSessionId,
         title: task.name,
         platform,
-        user_message: `开始执行任务：${task.name}`,
-        system_prompt: systemPrompt,
+        user_message: '请根据上述任务上下文开始工作',
       }
-      const chatResult = await postJsonTimeout(`${apiBase}/api/v1/connectors/hermes/chat`, chatPayload, 15000)
+      const chatResult = await postJsonTimeout(`${apiBase}/api/v1/connectors/hermes/chat`, chatPayload, 60000)
       if (chatResult && chatResult.assistant_message) {
-        // Ingest the assistant response
-        await postJson(`${apiBase}/api/v1/events/ingest`, {
-          platform,
-          event_id: `evt_assistant_${Date.now()}_3`,
-          event_type: 'message_created',
-          external_session_id: externalSessionId,
-          title: task.name,
-          payload_json: { source: 'shujietai-chat' },
-          message: { role: 'assistant', content: chatResult.assistant_message },
-        })
+        // Refresh timeline to show the new assistant + user messages from hermes/chat
         await loadSessionData()
       }
     } catch (_assistantError) {

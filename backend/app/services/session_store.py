@@ -132,7 +132,6 @@ class SessionStore:
 
     def _refresh_metrics(self, session_id: str) -> None:
         current = self._metrics[session_id]
-        message_count = len(self._messages[session_id])
         event_count = len(self._events[session_id])
         self._metrics[session_id] = SessionMetrics(
             session_id=session_id,
