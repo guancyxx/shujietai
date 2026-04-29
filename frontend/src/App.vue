@@ -792,6 +792,11 @@ async function startConversationFromTask(task) {
     }
     if (!timeline.value.messages) timeline.value.messages = []
     timeline.value.messages.push(optimisticUserMsg)
+    // Scroll to bottom after optimistic user message appears
+    await nextTick()
+    if (timelineScrollRef.value) {
+      timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+    }
 
     try {
       const response = await fetch(`${apiBase}/api/v1/connectors/hermes/chat/stream`, {
@@ -839,11 +844,14 @@ async function startConversationFromTask(task) {
               } else if (event.type === 'error') {
                 errorMessage.value = `AI Error: ${event.detail || 'Unknown'}`
               } else if (event.type === 'done') {
-                // Remove optimistic user msg, replace with real backend data
-                const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
-                if (idx !== -1) timeline.value.messages.splice(idx, 1)
+                // Replace timeline atomically — loadSessionData will overwrite
+                // the optimistic user msg with real backend data, no flicker.
                 await loadSessions()
                 await loadSessionData()
+                await nextTick()
+                if (timelineScrollRef.value) {
+                  timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+                }
               }
             } catch {
               // Ignore malformed JSON
@@ -853,12 +861,18 @@ async function startConversationFromTask(task) {
       }
     } catch (_streamError) {
       // Stream is best-effort; session already created
+      // Remove optimistic user msg on stream error (no loadSessionData replacement)
       const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
       if (idx !== -1) timeline.value.messages.splice(idx, 1)
     } finally {
       isStreaming.value = false
       streamAbortController.value = null
       streamingContent.value = ''
+      // Final scroll to bottom
+      await nextTick()
+      if (timelineScrollRef.value) {
+        timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+      }
     }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
@@ -1239,6 +1253,11 @@ async function sendMessageToHermes() {
   // Temporarily inject into timeline for display
   if (!timeline.value.messages) timeline.value.messages = []
   timeline.value.messages.push(optimisticUserMsg)
+  // Scroll to bottom after optimistic user message appears
+  await nextTick()
+  if (timelineScrollRef.value) {
+    timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+  }
 
   try {
     // Backend streaming endpoint handles user message ingest + assistant stream
@@ -1297,11 +1316,16 @@ async function sendMessageToHermes() {
             errorMessage.value = `AI Error: ${event.detail || 'Unknown'}`
           } else if (event.type === 'done') {
             // Stream finished, backend already ingested assistant message.
-            // Remove optimistic user message (backend ingested the real one).
-            const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
-            if (idx !== -1) timeline.value.messages.splice(idx, 1)
+            // Do NOT remove optimistic user msg here — loadSessionData will
+            // replace the entire timeline with real backend data atomically,
+            // avoiding the flicker of user msg disappearing then reappearing.
             await loadSessions()
             await loadSessionData()
+            // Auto-scroll after data refresh
+            await nextTick()
+            if (timelineScrollRef.value) {
+              timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+            }
           }
         } catch {
           // Ignore malformed JSON
@@ -1312,7 +1336,7 @@ async function sendMessageToHermes() {
     if (error.name !== 'AbortError') {
       errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
     }
-    // Remove optimistic user message on error
+    // Remove optimistic user message on error (no loadSessionData replacement)
     const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
     if (idx !== -1) timeline.value.messages.splice(idx, 1)
   } finally {
@@ -1320,6 +1344,11 @@ async function sendMessageToHermes() {
     isStreaming.value = false
     streamAbortController.value = null
     streamingContent.value = ''
+    // Final scroll to bottom when stream ends
+    await nextTick()
+    if (timelineScrollRef.value) {
+      timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+    }
   }
 }
 
