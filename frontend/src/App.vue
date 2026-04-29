@@ -1400,7 +1400,7 @@ onMounted(refreshData)
       <div class="picker-modal panel create-conversation-modal">
         <div class="picker-modal-header">
           <h3>新建对话</h3>
-          <button type="button" class="picker-close-btn" :disabled="creatingConversation" @click="closeCreateConversationModal">关闭</button>
+          <button type="button" class="picker-close-btn" :disabled="creatingConversation" @click="closeCreateConversationModal" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
         </div>
 
         <div class="create-conversation-form">
@@ -1445,7 +1445,7 @@ onMounted(refreshData)
       <div class="picker-modal panel create-conversation-modal">
         <div class="picker-modal-header">
           <h3>新建项目</h3>
-          <button type="button" class="picker-close-btn" :disabled="creatingProject" @click="closeProjectCreateModal">关闭</button>
+          <button type="button" class="picker-close-btn" :disabled="creatingProject" @click="closeProjectCreateModal" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
         </div>
 
         <div class="create-conversation-form">
@@ -1523,7 +1523,7 @@ onMounted(refreshData)
       <div class="picker-modal panel create-conversation-modal">
         <div class="picker-modal-header">
           <h3>编辑项目</h3>
-          <button type="button" class="picker-close-btn" :disabled="updatingProject" @click="closeProjectEditModal">关闭</button>
+          <button type="button" class="picker-close-btn" :disabled="updatingProject" @click="closeProjectEditModal" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
         </div>
 
         <div class="create-conversation-form">
@@ -1556,7 +1556,7 @@ onMounted(refreshData)
       <div class="picker-modal panel">
         <div class="picker-modal-header">
           <h3>选择模型</h3>
-          <button type="button" class="picker-close-btn" @click="closeModelModal">关闭</button>
+          <button type="button" class="picker-close-btn" @click="closeModelModal" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
         </div>
         <div class="picker-search-row picker-provider-row">
           <select v-model="modelProviderDraft" class="picker-provider-select">
@@ -1594,7 +1594,7 @@ onMounted(refreshData)
       <div class="picker-modal panel">
         <div class="picker-modal-header">
           <h3>选择 Skills</h3>
-          <button type="button" class="picker-close-btn" @click="closeSkillModal">关闭</button>
+          <button type="button" class="picker-close-btn" @click="closeSkillModal" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
         </div>
         <div class="picker-search-row">
           <input v-model="skillSearchDraft" class="picker-search-input" placeholder="搜索 skill 名称或描述" />
@@ -1628,7 +1628,7 @@ onMounted(refreshData)
       <div class="picker-modal panel">
         <div class="picker-modal-header">
           <h3>选择 MCP Servers</h3>
-          <button type="button" class="picker-close-btn" @click="closeMcpModal">关闭</button>
+          <button type="button" class="picker-close-btn" @click="closeMcpModal" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
         </div>
         <div class="picker-search-row">
           <input v-model="mcpSearchDraft" class="picker-search-input" placeholder="搜索 MCP 名称" />
@@ -1661,7 +1661,7 @@ onMounted(refreshData)
       <div class="picker-modal panel create-conversation-modal">
         <div class="picker-modal-header">
           <h3>新建任务</h3>
-          <button type="button" class="picker-close-btn" :disabled="creatingTaskBoardItem" @click="closeTaskBoardCreateModal">关闭</button>
+          <button type="button" class="picker-close-btn" :disabled="creatingTaskBoardItem" @click="closeTaskBoardCreateModal" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
         </div>
 
         <div class="create-conversation-form">
@@ -1725,7 +1725,7 @@ onMounted(refreshData)
       <div class="picker-modal panel create-conversation-modal">
         <div class="picker-modal-header">
           <h3>编辑任务</h3>
-          <button type="button" class="picker-close-btn" :disabled="updatingTaskBoardItem" @click="closeTaskBoardEditModal">关闭</button>
+          <button type="button" class="picker-close-btn" :disabled="updatingTaskBoardItem" @click="closeTaskBoardEditModal" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
         </div>
 
         <div class="create-conversation-form">
