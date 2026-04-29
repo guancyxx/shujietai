@@ -423,9 +423,10 @@ def test_hermes_webhook_ingest_message_event() -> None:
 
 
 def test_hermes_chat_endpoint_creates_user_and_assistant_messages(monkeypatch) -> None:
-    def fake_ask_hermes(history_messages: list[dict[str, str]], user_message: str) -> str:
+    def fake_ask_hermes(history_messages: list[dict[str, str]], user_message: str, system_prompt: str | None = None) -> str:
         assert history_messages == []
         assert user_message == "What is your name?"
+        assert system_prompt is None
         return "I am Hermes."
 
     monkeypatch.setattr("app.main.ask_hermes_response", fake_ask_hermes)
@@ -456,7 +457,7 @@ def test_hermes_chat_endpoint_creates_user_and_assistant_messages(monkeypatch) -
 
 
 def test_hermes_chat_endpoint_returns_502_when_hermes_unavailable(monkeypatch) -> None:
-    def fake_ask_hermes(_: list[dict[str, str]], __: str) -> str:
+    def fake_ask_hermes(_: list[dict[str, str]], __: str, system_prompt: str | None = None) -> str:
         raise RuntimeError("hermes_failed")
 
     monkeypatch.setattr("app.main.ask_hermes_response", fake_ask_hermes)
@@ -477,7 +478,7 @@ def test_hermes_chat_endpoint_returns_502_when_hermes_unavailable(monkeypatch) -
 def test_hermes_chat_endpoint_reuses_session_history_on_next_turn(monkeypatch) -> None:
     captured_histories: list[list[dict[str, str]]] = []
 
-    def fake_ask_hermes(history_messages: list[dict[str, str]], user_message: str) -> str:
+    def fake_ask_hermes(history_messages: list[dict[str, str]], user_message: str, system_prompt: str | None = None) -> str:
         captured_histories.append(history_messages)
         return f"echo:{user_message}"
 
@@ -537,6 +538,36 @@ def test_hermes_chat_endpoint_uses_runtime_preferences_instead_of_request_fields
     assert payload["assistant_message"] == "runtime preference reply"
     assert captured["model_override"] == "nvidia/z-ai/glm-5.1"
     assert captured["messages"][-1] == {"role": "user", "content": "hello runtime"}
+
+
+def test_hermes_chat_endpoint_injects_system_prompt_and_persists_it(monkeypatch) -> None:
+    captured_messages: list[list[dict[str, str]]] = []
+
+    def fake_api(messages: list[dict[str, str]], model_override: str | None = None) -> str:
+        captured_messages.append(messages)
+        return "system prompt acknowledged"
+
+    monkeypatch.setattr("app.main._ask_hermes_via_api", fake_api)
+
+    # First turn with system_prompt
+    first = client.post(
+        "/api/v1/connectors/hermes/chat",
+        json={
+            "external_session_id": "hermes_chat_sys_sess_1",
+            "title": "Hermes System Prompt",
+            "user_message": "start task",
+            "system_prompt": "[Task Context]\nTask: Build API",
+        },
+    )
+    assert first.status_code == 200
+    assert captured_messages[0][0] == {"role": "system", "content": "[Task Context]\nTask: Build API"}
+    assert captured_messages[0][-1] == {"role": "user", "content": "start task"}
+
+    # Verify system message persisted in timeline
+    timeline = client.get(f"/api/v1/sessions/{first.json()['session_id']}/timeline")
+    timeline_messages = timeline.json()["messages"]
+    assert timeline_messages[0]["role"] == "system"
+    assert "Build API" in timeline_messages[0]["content"]
 
 
 def test_ask_hermes_response_openai_api_success(monkeypatch) -> None:

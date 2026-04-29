@@ -1223,6 +1223,16 @@ h2 {
   color: #ffe9e9;
 }
 
+.project-btn-primary {
+  border-color: rgba(94, 220, 255, 0.52);
+  background: rgba(20, 60, 110, 0.78);
+  color: #d6f0ff;
+}
+
+.project-btn-primary:hover:not(:disabled) {
+  background: rgba(28, 80, 140, 0.88);
+}
+
 .project-btn:disabled {
   opacity: 0.56;
   cursor: not-allowed;

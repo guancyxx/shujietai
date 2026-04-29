@@ -53,6 +53,7 @@ const isTaskBoardEditModalOpen = ref(false)
 const creatingTaskBoardItem = ref(false)
 const updatingTaskBoardItem = ref(false)
 const deletingTaskBoardItemId = ref('')
+const startingConversationFromTask = ref(false)
 const editingTaskBoardItemId = ref('')
 const taskBoardCreateForm = ref({
   name: '',
@@ -692,6 +693,53 @@ function openTaskBoardByProject(project) {
   activePage.value = 'task-board'
 }
 
+async function startConversationFromTask(task) {
+  if (startingConversationFromTask.value) return
+  startingConversationFromTask.value = true
+  errorMessage.value = ''
+  try {
+    const externalSessionId = `web_${Date.now()}`
+    const systemPrompt = buildTaskSystemPrompt(task)
+    const payload = {
+      external_session_id: externalSessionId,
+      title: task.name,
+      platform: task.ai_platform || 'hermes',
+      user_message: `开始执行任务：${task.name}`,
+      system_prompt: systemPrompt,
+    }
+    await postJson(`${apiBase}/api/v1/connectors/hermes/chat`, payload)
+    await loadSessions()
+    const matched = sessions.value.find((s) => s.external_session_id === externalSessionId)
+    if (matched) {
+      selectedSessionId.value = matched.id
+      selectedExternalSessionId.value = matched.external_session_id
+    }
+    activePage.value = 'chat'
+    await loadSessionData()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
+  } finally {
+    startingConversationFromTask.value = false
+  }
+}
+
+function buildTaskSystemPrompt(task) {
+  const lines = [`[Task Context]`]
+  lines.push(`Task: ${task.name}`)
+  if (task.description) lines.push(`Description: ${task.description}`)
+  lines.push(`Status: ${taskBoardStatusLabelMap[task.status] || task.status}`)
+  lines.push(`AI Platform: ${task.ai_platform || 'hermes'}`)
+  if (task.project_name) {
+    lines.push(`\n[Project]`)
+    lines.push(`Project: ${task.project_name}`)
+    if (task.project_repository_name) lines.push(`Repository: ${task.project_repository_name}`)
+    if (task.project_repository_url) lines.push(`Repository URL: ${task.project_repository_url}`)
+  }
+  if (task.upstream_task_name) lines.push(`\n[Upstream Dependency] ${task.upstream_task_name}`)
+  if (task.parent_task_name) lines.push(`[Parent Task] ${task.parent_task_name}`)
+  return lines.join('\n')
+}
+
 function openTaskBoardCreateModal() {
   resetTaskBoardCreateForm()
   isTaskBoardCreateModalOpen.value = true
@@ -1284,6 +1332,9 @@ onMounted(refreshData)
                   <span class="task-board-status-pill" :class="taskBoardStatusClass(item.status)">{{ taskBoardStatusLabelMap[item.status] || item.status }}</span>
                 </div>
                 <div class="task-board-card-actions">
+                  <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click="startConversationFromTask(item)">
+                    {{ startingConversationFromTask ? '启动中...' : '开始会话' }}
+                  </button>
                   <button type="button" class="project-btn" @click="openTaskBoardEditModal(item)">编辑</button>
                   <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click="deleteTaskBoardItem(item)">
                     {{ deletingTaskBoardItemId === item.id ? '删除中...' : '删除' }}

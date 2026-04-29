@@ -140,15 +140,18 @@ def health() -> dict[str, object]:
     }
 
 
-def _build_history_messages(history_messages: list[dict[str, str]], user_message: str) -> list[dict[str, str]]:
-    messages = [
+def _build_history_messages(history_messages: list[dict[str, str]], user_message: str, system_prompt: str | None = None) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    if system_prompt and system_prompt.strip():
+        messages.append({"role": "system", "content": system_prompt.strip()})
+    messages.extend(
         {
             "role": message["role"],
             "content": message["content"],
         }
         for message in history_messages
         if message.get("role") in {"system", "user", "assistant"} and message.get("content")
-    ]
+    )
     messages.append({"role": "user", "content": user_message})
     return messages
 
@@ -234,8 +237,9 @@ def _ask_hermes_via_cli(
 def ask_hermes_response(
     history_messages: list[dict[str, str]],
     user_message: str,
+    system_prompt: str | None = None,
 ) -> str:
-    messages = _build_history_messages(history_messages, user_message)
+    messages = _build_history_messages(history_messages, user_message, system_prompt=system_prompt)
     model_for_request = get_selected_model() or os.getenv("HERMES_MODEL", "").strip()
     provider_for_request = _resolve_provider_for_model(model_for_request)
 
@@ -300,9 +304,23 @@ def hermes_chat(payload: HermesChatRequest, request: Request) -> HermesChatRespo
         assistant_message = ask_hermes_response(
             history_messages,
             payload.user_message,
+            system_prompt=payload.system_prompt,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="hermes_unavailable") from exc
+
+    if payload.system_prompt and payload.system_prompt.strip() and not history_messages:
+        system_event_id = f"evt_system_{uuid4().hex}"
+        system_ingest = IngestEventRequest(
+            platform=selected_platform,
+            event_id=system_event_id,
+            event_type="message_created",
+            external_session_id=payload.external_session_id,
+            title=payload.title,
+            payload_json={"source": "shujietai-chat"},
+            message={"role": "system", "content": payload.system_prompt.strip()},
+        )
+        store.ingest(system_ingest)
 
     user_event_id = f"evt_user_{uuid4().hex}"
     user_ingest = IngestEventRequest(

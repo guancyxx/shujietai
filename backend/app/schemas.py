@@ -67,6 +67,7 @@ class HermesChatRequest(BaseModel):
     user_message: str = Field(min_length=1, max_length=8000)
     title: str | None = None
     platform: str | None = None
+    system_prompt: str | None = Field(default=None, max_length=4000)
 
 
 class RuntimePreferenceUpdateRequest(BaseModel):
@@ -150,6 +151,8 @@ class TaskBoardItem(BaseModel):
     ai_platform: str
     project_id: UUID | None = None
     project_name: str | None = None
+    project_repository_url: str | None = None
+    project_repository_name: str | None = None
     upstream_task_id: UUID | None = None
     upstream_task_name: str | None = None
     parent_task_id: UUID | None = None

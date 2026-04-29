@@ -387,6 +387,8 @@ class SqlAlchemySessionStore:
             ai_platform=row.ai_platform,
             project_id=UUID(row.project_id) if row.project_id else None,
             project_name=project.name if project else None,
+            project_repository_url=project.repository_url if project else None,
+            project_repository_name=project.repository_name if project else None,
             upstream_task_id=UUID(row.upstream_task_id) if row.upstream_task_id else None,
             upstream_task_name=upstream.name if upstream else None,
             parent_task_id=UUID(row.parent_task_id) if row.parent_task_id else None,
