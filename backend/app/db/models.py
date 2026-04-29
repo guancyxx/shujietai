@@ -71,6 +71,43 @@ class SessionMetricsEntity(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ProjectEntity(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    repository_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    repository_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    local_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TaskBoardEntity(Base):
+    __tablename__ = "task_board_items"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ai_platform: Mapped[str] = mapped_column(String(64), nullable=False, default="hermes")
+    project_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    upstream_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    parent_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SystemConfigEntity(Base):
+    __tablename__ = "system_configs"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class IngestRetryEntity(Base):
     __tablename__ = "ingest_retries"
 

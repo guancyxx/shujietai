@@ -7,6 +7,38 @@ from app.main import app
 client = TestClient(app)
 
 
+def _mock_github_project_flow(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.github_project_service.GitHubProjectService.default_local_path",
+        lambda self, repository_url: "/home/guancy/workspace/Hello-World",
+    )
+    monkeypatch.setattr(
+        "app.services.github_project_service.GitHubProjectService.parse_repository_url",
+        lambda self, repository_url: ("octocat", "Hello-World"),
+    )
+    monkeypatch.setattr(
+        "app.services.github_project_service.GitHubProjectService.list_repositories",
+        lambda self: [
+            {
+                "name": "Hello-World",
+                "full_name": "octocat/Hello-World",
+                "url": "https://github.com/octocat/Hello-World",
+                "description": "Demo repository",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.github_project_service.GitHubProjectService.create_repository",
+        lambda self, payload: {
+            "name": payload.name,
+            "full_name": f"octocat/{payload.name}",
+            "url": f"https://github.com/octocat/{payload.name}",
+            "description": payload.description,
+        },
+    )
+
+
+
 def test_health() -> None:
     response = client.get("/api/v1/health")
     assert response.status_code == 200
@@ -20,6 +52,32 @@ def test_health() -> None:
     }
 
 
+def test_get_system_config() -> None:
+    response = client.get("/api/v1/system/config")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "github_token_configured" in payload
+
+
+def test_update_github_token(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.system_config_service.SystemConfigService.update_github_token",
+        lambda self, token: None,
+    )
+    monkeypatch.setattr(
+        "app.services.system_config_service.SystemConfigService.get_config",
+        lambda self: {"github_token_configured": True},
+    )
+
+    response = client.put(
+        "/api/v1/system/config/github-token",
+        json={"github_token": "ghp_example"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["github_token_configured"] is True
+
+
 def test_list_sessions_returns_empty_initially() -> None:
     response = client.get("/api/v1/sessions")
     assert response.status_code == 200
@@ -30,6 +88,257 @@ def test_list_sessions_returns_empty_initially() -> None:
 def test_get_session_timeline_not_found_for_missing_session() -> None:
     response = client.get("/api/v1/sessions/sess_missing/timeline")
     assert response.status_code == 404
+
+
+def test_project_crud_with_optional_directory(monkeypatch) -> None:
+    _mock_github_project_flow(monkeypatch)
+    create_response = client.post(
+        "/api/v1/projects",
+        json={
+            "repository_url": "https://github.com/octocat/Hello-World",
+            "name": "ShuJieTai MVP",
+            "description": "Project cockpit implementation",
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["name"] == "ShuJieTai MVP"
+    assert created["repository_name"] == "Hello-World"
+    assert created["repository_url"] == "https://github.com/octocat/Hello-World"
+    assert created["local_path"].endswith("/Hello-World")
+    assert created["code"].startswith("proj-")
+
+    list_response = client.get("/api/v1/projects")
+    assert list_response.status_code == 200
+    listed = list_response.json()["items"]
+    assert len(listed) == 1
+    assert listed[0]["id"] == created["id"]
+
+    update_response = client.patch(
+        f"/api/v1/projects/{created['id']}",
+        json={
+            "name": "ShuJieTai Project Center",
+            "description": "Updated description",
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["name"] == "ShuJieTai Project Center"
+    assert updated["description"] == "Updated description"
+
+    delete_response = client.delete(f"/api/v1/projects/{created['id']}")
+    assert delete_response.status_code == 200
+
+    list_after_delete = client.get("/api/v1/projects")
+    assert list_after_delete.status_code == 200
+    assert list_after_delete.json()["items"] == []
+
+
+def test_project_create_rejects_invalid_repo_url() -> None:
+    response = client.post(
+        "/api/v1/projects",
+        json={
+            "name": "Bad Project",
+            "description": "Invalid URL",
+            "repository_url": "not-a-github-url",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "invalid_github_repository_url"
+
+
+def test_task_board_crud_with_filters(monkeypatch) -> None:
+    _mock_github_project_flow(monkeypatch)
+
+    project_response = client.post(
+        "/api/v1/projects",
+        json={
+            "repository_url": "https://github.com/octocat/Hello-World",
+            "name": "Task Board Project",
+            "description": "Task board linkage",
+        },
+    )
+    assert project_response.status_code == 200
+    project_id = project_response.json()["id"]
+
+    first_task = client.post(
+        "/api/v1/task-board",
+        json={
+            "name": "Task A",
+            "description": "A description",
+            "ai_platform": "hermes",
+            "project_id": project_id,
+            "status": "draft",
+        },
+    )
+    assert first_task.status_code == 200
+    first_payload = first_task.json()
+
+    second_task = client.post(
+        "/api/v1/task-board",
+        json={
+            "name": "Task B",
+            "description": "B description",
+            "ai_platform": "hermes",
+            "project_id": project_id,
+            "upstream_task_id": first_payload["id"],
+            "parent_task_id": first_payload["id"],
+            "status": "in_progress",
+        },
+    )
+    assert second_task.status_code == 200
+    second_payload = second_task.json()
+
+    list_response = client.get("/api/v1/task-board", params={"project_id": project_id, "keyword": "Task B"})
+    assert list_response.status_code == 200
+    listed = list_response.json()["items"]
+    assert len(listed) == 1
+    assert listed[0]["id"] == second_payload["id"]
+
+    update_response = client.patch(
+        f"/api/v1/task-board/{second_payload['id']}",
+        json={
+            "status": "blocked",
+            "description": "B blocked",
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["status"] == "blocked"
+    assert updated["description"] == "B blocked"
+
+    delete_response = client.delete(f"/api/v1/task-board/{first_payload['id']}")
+    assert delete_response.status_code == 200
+
+    list_after_delete = client.get("/api/v1/task-board")
+    assert list_after_delete.status_code == 200
+    remain = list_after_delete.json()["items"]
+    assert len(remain) == 1
+    assert remain[0]["id"] == second_payload["id"]
+    assert remain[0]["upstream_task_id"] is None
+    assert remain[0]["parent_task_id"] is None
+
+
+def test_task_board_create_rejects_missing_project() -> None:
+    response = client.post(
+        "/api/v1/task-board",
+        json={
+            "name": "Task A",
+            "description": "A description",
+            "project_id": "11111111-1111-1111-1111-111111111111",
+            "status": "draft",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "project_not_found"
+
+
+def test_task_board_update_rejects_self_dependency(monkeypatch) -> None:
+    _mock_github_project_flow(monkeypatch)
+    project_response = client.post(
+        "/api/v1/projects",
+        json={
+            "repository_url": "https://github.com/octocat/Hello-World",
+            "name": "Task Board Project 2",
+            "description": "Task board linkage",
+        },
+    )
+    assert project_response.status_code == 200
+
+    task_response = client.post(
+        "/api/v1/task-board",
+        json={
+            "name": "Task Self",
+            "description": "self dep",
+            "status": "draft",
+        },
+    )
+    assert task_response.status_code == 200
+    task_id = task_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/v1/task-board/{task_id}",
+        json={
+            "upstream_task_id": task_id,
+        },
+    )
+    assert update_response.status_code == 422
+    assert update_response.json()["detail"] == "upstream_task_cannot_be_self"
+
+
+def test_list_github_repositories(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.main.system_config_service.get_github_token",
+        lambda: "ghp_mock",
+    )
+    monkeypatch.setattr(
+        "app.main.github_project_service.list_repositories",
+        lambda token_override="": [
+            {
+                "name": "repo-a",
+                "full_name": "owner/repo-a",
+                "url": "https://github.com/owner/repo-a",
+                "description": "Repo A description",
+            }
+        ],
+    )
+
+    response = client.get("/api/v1/projects/github/repos")
+    assert response.status_code == 200
+    items = response.json()
+    assert len(items) == 1
+    assert items[0]["name"] == "repo-a"
+    assert items[0]["description"] == "Repo A description"
+
+
+def test_list_github_repositories_loads_token_from_system_config(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.main.system_config_service.get_github_token",
+        lambda: "ghp_from_db",
+    )
+
+    captured: dict[str, str] = {}
+
+    def fake_list_repositories(token_override: str = ""):
+        captured["token_override"] = token_override
+        return [
+            {
+                "name": "repo-a",
+                "full_name": "owner/repo-a",
+                "url": "https://github.com/owner/repo-a",
+                "description": "Repo A description",
+            }
+        ]
+
+    monkeypatch.setattr("app.main.github_project_service.list_repositories", fake_list_repositories)
+
+    response = client.get("/api/v1/projects/github/repos")
+    assert response.status_code == 200
+    items = response.json()
+    assert len(items) == 1
+    assert captured["token_override"] == "ghp_from_db"
+
+
+def test_create_github_repository(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.main.github_project_service.create_repository",
+        lambda payload: {
+            "name": payload.name,
+            "full_name": f"owner/{payload.name}",
+            "url": f"https://github.com/owner/{payload.name}",
+            "description": payload.description,
+        },
+    )
+
+    response = client.post(
+        "/api/v1/projects/github/repos",
+        json={"name": "new-repo", "description": "desc", "private": False},
+    )
+    assert response.status_code == 200
+    item = response.json()
+    assert item["name"] == "new-repo"
+    assert item["full_name"] == "owner/new-repo"
+    assert item["description"] == "desc"
 
 
 def test_get_cockpit_not_found_for_missing_session() -> None:
@@ -202,6 +511,34 @@ def test_hermes_chat_endpoint_reuses_session_history_on_next_turn(monkeypatch) -
     ]
 
 
+def test_hermes_chat_endpoint_uses_runtime_preferences_instead_of_request_fields(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.get_selected_model", lambda: "nvidia/z-ai/glm-5.1")
+
+    captured: dict = {}
+
+    def fake_api(messages: list[dict[str, str]], model_override: str | None = None) -> str:
+        captured["messages"] = messages
+        captured["model_override"] = model_override
+        return "runtime preference reply"
+
+    monkeypatch.setattr("app.main._ask_hermes_via_api", fake_api)
+
+    response = client.post(
+        "/api/v1/connectors/hermes/chat",
+        json={
+            "external_session_id": "hermes_chat_pref_sess_1",
+            "title": "Hermes Runtime Pref",
+            "user_message": "hello runtime",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["assistant_message"] == "runtime preference reply"
+    assert captured["model_override"] == "nvidia/z-ai/glm-5.1"
+    assert captured["messages"][-1] == {"role": "user", "content": "hello runtime"}
+
+
 def test_ask_hermes_response_openai_api_success(monkeypatch) -> None:
     class FakeResponse:
         def raise_for_status(self) -> None:
@@ -231,6 +568,7 @@ def test_ask_hermes_response_openai_api_success(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_API_KEY", "test-key")
     monkeypatch.setenv("HERMES_MODEL", "gpt-5.3-codex")
     monkeypatch.setenv("HERMES_API_TIMEOUT_SECONDS", "33")
+    monkeypatch.setattr("app.main.get_selected_model", lambda: "")
     monkeypatch.setattr("app.main.httpx.post", fake_post)
 
     from app.main import ask_hermes_response
@@ -294,8 +632,14 @@ def test_ask_hermes_response_falls_back_to_cli_when_api_unavailable(monkeypatch)
     monkeypatch.setenv("HERMES_CLI_FALLBACK_ENABLED", "1")
     monkeypatch.setattr("app.main.httpx.post", fake_post)
 
-    def fake_cli(messages: list[dict[str, str]]) -> str:
+    def fake_cli(
+        messages: list[dict[str, str]],
+        model_override: str | None = None,
+        provider_override: str | None = None,
+    ) -> str:
         assert messages[-1] == {"role": "user", "content": "ping"}
+        assert isinstance(model_override, str) or model_override is None
+        assert isinstance(provider_override, str) or provider_override is None
         return "cli ok"
 
     monkeypatch.setattr("app.main._ask_hermes_via_cli", fake_cli)

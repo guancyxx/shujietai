@@ -9,12 +9,20 @@ from app.schemas import (
     EventItem,
     IngestEventRequest,
     MessageItem,
+    ProjectCreateRequest,
+    ProjectItem,
+    ProjectUpdateRequest,
     SessionDetail,
     SessionMetrics,
     SessionSummary,
+    TaskBoardCreateRequest,
+    TaskBoardItem,
+    TaskBoardUpdateRequest,
     TaskItem,
     TimelineResponse,
 )
+from app.services.hermes_runtime_catalog import build_runtime_state
+from app.services.github_project_service import GitHubProjectService
 
 
 class SessionStore:
@@ -27,6 +35,10 @@ class SessionStore:
         self._events: dict[str, list[EventItem]] = {}
         self._tasks: dict[str, list[TaskItem]] = {}
         self._metrics: dict[str, SessionMetrics] = {}
+        self._project_sequence = 0
+        self._projects: dict[str, ProjectItem] = {}
+        self._task_board_items: dict[str, TaskBoardItem] = {}
+        self._github_service = GitHubProjectService()
 
     def _now(self) -> datetime:
         return datetime.now(UTC)
@@ -183,6 +195,223 @@ class SessionStore:
                     history.append({"role": message.role, "content": message.content})
             return history
 
+    def delete_session(self, session_id: str) -> bool:
+        with self._lock:
+            session = self._sessions.pop(session_id, None)
+            if session is None:
+                return False
+
+            session_events = self._events.pop(session_id, [])
+            self._messages.pop(session_id, None)
+            self._tasks.pop(session_id, None)
+            self._metrics.pop(session_id, None)
+            self._session_id_by_external.pop((session.platform, session.external_session_id), None)
+
+            event_keys = {(session.platform, event.id) for event in session_events}
+            self._dedupe_keys = {key for key in self._dedupe_keys if key not in event_keys}
+            return True
+
+    def clear_sessions(self) -> int:
+        with self._lock:
+            deleted_count = len(self._sessions)
+            self._sessions.clear()
+            self._messages.clear()
+            self._events.clear()
+            self._tasks.clear()
+            self._metrics.clear()
+            self._session_id_by_external.clear()
+            self._dedupe_keys.clear()
+            return deleted_count
+
+    def list_project_directory_options(self) -> list[str]:
+        return []
+
+    def _next_project_code(self) -> str:
+        self._project_sequence += 1
+        return f"proj-{self._project_sequence:04d}"
+
+    def list_projects(self) -> list[ProjectItem]:
+        with self._lock:
+            return sorted(self._projects.values(), key=lambda item: item.created_at)
+
+    def create_project(self, payload: ProjectCreateRequest) -> ProjectItem:
+        with self._lock:
+            project_code = self._next_project_code()
+            now = self._now()
+            repository_url = payload.repository_url.strip()
+            _owner, repository_name = self._github_service.parse_repository_url(repository_url)
+            local_path = self._github_service.default_local_path(repository_url)
+            project = ProjectItem(
+                id=uuid4(),
+                code=project_code,
+                name=(payload.name or repository_name).strip(),
+                description=payload.description.strip(),
+                repository_url=repository_url,
+                repository_name=repository_name,
+                local_path=local_path,
+                created_at=now,
+                updated_at=now,
+            )
+            self._projects[str(project.id)] = project
+            return project
+
+    def update_project(self, project_id: str, payload: ProjectUpdateRequest) -> ProjectItem | None:
+        with self._lock:
+            current = self._projects.get(project_id)
+            if current is None:
+                return None
+
+            next_name = payload.name.strip() if payload.name is not None else current.name
+            next_description = payload.description.strip() if payload.description is not None else current.description
+
+            updated = current.model_copy(
+                update={
+                    "name": next_name,
+                    "description": next_description,
+                    "updated_at": self._now(),
+                }
+            )
+            self._projects[project_id] = updated
+            return updated
+
+    def delete_project(self, project_id: str) -> bool:
+        with self._lock:
+            return self._projects.pop(project_id, None) is not None
+
+    def list_task_board_items(self, project_id: str | None = None, keyword: str | None = None) -> list[TaskBoardItem]:
+        with self._lock:
+            rows = sorted(self._task_board_items.values(), key=lambda item: item.created_at)
+            if project_id:
+                rows = [item for item in rows if str(item.project_id) == project_id]
+            normalized_keyword = (keyword or "").strip().lower()
+            if normalized_keyword:
+                rows = [
+                    item
+                    for item in rows
+                    if normalized_keyword in f"{item.name} {item.description} {item.ai_platform}".lower()
+                ]
+            return rows
+
+    def create_task_board_item(self, payload: TaskBoardCreateRequest) -> TaskBoardItem:
+        with self._lock:
+            project_item = None
+            if payload.project_id is not None:
+                project_item = self._projects.get(str(payload.project_id))
+                if project_item is None:
+                    raise ValueError("project_not_found")
+
+            upstream_item = None
+            if payload.upstream_task_id is not None:
+                upstream_item = self._task_board_items.get(str(payload.upstream_task_id))
+                if upstream_item is None:
+                    raise ValueError("upstream_task_not_found")
+
+            parent_item = None
+            if payload.parent_task_id is not None:
+                parent_item = self._task_board_items.get(str(payload.parent_task_id))
+                if parent_item is None:
+                    raise ValueError("parent_task_not_found")
+
+            now = self._now()
+            created = TaskBoardItem(
+                id=uuid4(),
+                name=payload.name.strip(),
+                description=payload.description.strip(),
+                ai_platform=(payload.ai_platform or "hermes").strip() or "hermes",
+                project_id=payload.project_id,
+                project_name=project_item.name if project_item else None,
+                upstream_task_id=payload.upstream_task_id,
+                upstream_task_name=upstream_item.name if upstream_item else None,
+                parent_task_id=payload.parent_task_id,
+                parent_task_name=parent_item.name if parent_item else None,
+                status=payload.status,
+                created_at=now,
+                updated_at=now,
+            )
+            self._task_board_items[str(created.id)] = created
+            return created
+
+    def update_task_board_item(self, task_id: str, payload: TaskBoardUpdateRequest) -> TaskBoardItem | None:
+        with self._lock:
+            current = self._task_board_items.get(task_id)
+            if current is None:
+                return None
+
+            next_name = payload.name.strip() if payload.name is not None else current.name
+            next_description = payload.description.strip() if payload.description is not None else current.description
+            next_ai_platform = payload.ai_platform.strip() if payload.ai_platform is not None else current.ai_platform
+            next_status = payload.status if payload.status is not None else current.status
+
+            next_project_id = current.project_id
+            if "project_id" in payload.model_fields_set:
+                next_project_id = payload.project_id
+            next_project_name = None
+            if next_project_id is not None:
+                project_item = self._projects.get(str(next_project_id))
+                if project_item is None:
+                    raise ValueError("project_not_found")
+                next_project_name = project_item.name
+
+            next_upstream_task_id = current.upstream_task_id
+            if "upstream_task_id" in payload.model_fields_set:
+                next_upstream_task_id = payload.upstream_task_id
+            next_upstream_task_name = None
+            if next_upstream_task_id is not None:
+                if str(next_upstream_task_id) == task_id:
+                    raise ValueError("upstream_task_cannot_be_self")
+                upstream_item = self._task_board_items.get(str(next_upstream_task_id))
+                if upstream_item is None:
+                    raise ValueError("upstream_task_not_found")
+                next_upstream_task_name = upstream_item.name
+
+            next_parent_task_id = current.parent_task_id
+            if "parent_task_id" in payload.model_fields_set:
+                next_parent_task_id = payload.parent_task_id
+            next_parent_task_name = None
+            if next_parent_task_id is not None:
+                if str(next_parent_task_id) == task_id:
+                    raise ValueError("parent_task_cannot_be_self")
+                parent_item = self._task_board_items.get(str(next_parent_task_id))
+                if parent_item is None:
+                    raise ValueError("parent_task_not_found")
+                next_parent_task_name = parent_item.name
+
+            updated = current.model_copy(
+                update={
+                    "name": next_name,
+                    "description": next_description,
+                    "ai_platform": next_ai_platform or "hermes",
+                    "project_id": next_project_id,
+                    "project_name": next_project_name,
+                    "upstream_task_id": next_upstream_task_id,
+                    "upstream_task_name": next_upstream_task_name,
+                    "parent_task_id": next_parent_task_id,
+                    "parent_task_name": next_parent_task_name,
+                    "status": next_status,
+                    "updated_at": self._now(),
+                }
+            )
+            self._task_board_items[task_id] = updated
+            return updated
+
+    def delete_task_board_item(self, task_id: str) -> bool:
+        with self._lock:
+            removed = self._task_board_items.pop(task_id, None)
+            if removed is None:
+                return False
+            for key, value in list(self._task_board_items.items()):
+                update_data = {}
+                if value.parent_task_id and str(value.parent_task_id) == task_id:
+                    update_data["parent_task_id"] = None
+                    update_data["parent_task_name"] = None
+                if value.upstream_task_id and str(value.upstream_task_id) == task_id:
+                    update_data["upstream_task_id"] = None
+                    update_data["upstream_task_name"] = None
+                if update_data:
+                    update_data["updated_at"] = self._now()
+                    self._task_board_items[key] = value.model_copy(update=update_data)
+            return True
+
     def get_cockpit(self, session_id: str) -> CockpitResponse | None:
         session = self.get_session(session_id)
         timeline = self.get_timeline(session_id)
@@ -194,6 +423,7 @@ class SessionStore:
             tasks=self._tasks.get(session_id, []),
             timeline=timeline,
             metrics=metrics,
+            runtime=build_runtime_state(),
         )
 
 

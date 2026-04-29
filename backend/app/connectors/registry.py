@@ -16,6 +16,9 @@ class ConnectorRegistry:
             raise KeyError(f"connector_not_registered:{connector_name}")
         return adapter
 
+    def names(self) -> list[str]:
+        return sorted(self._adapters.keys())
+
 
 def build_default_registry() -> ConnectorRegistry:
     registry = ConnectorRegistry()

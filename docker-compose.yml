@@ -42,7 +42,7 @@ services:
       WORKSPACE_TOKEN: ${WORKSPACE_TOKEN:-dev-workspace-token}
       PYTHONPATH: /app
       HOME: /home/guancy
-      HERMES_API_BASE_URL: ${HERMES_API_BASE_URL:-http://host.docker.internal:8642/v1}
+      HERMES_API_BASE_URL: ${HERMES_API_BASE_URL:-http://host-gateway.internal:8642/v1}
       HERMES_API_KEY: ${HERMES_API_KEY:-}
       HERMES_MODEL: ${HERMES_MODEL:-gpt-5.3-codex}
       HERMES_API_TIMEOUT_SECONDS: ${HERMES_API_TIMEOUT_SECONDS:-120}
@@ -63,6 +63,7 @@ services:
       - ${HERMES_UV_ROOT:-/home/guancy/.local/share/uv}:/home/guancy/.local/share/uv:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "host-gateway.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

@@ -14,12 +14,26 @@ from app.schemas import (
     DeadLetterListResponse,
     DeadLetterReplayRequest,
     DeadLetterReplayResponse,
+    GitHubRepoCreateRequest,
+    GitHubRepoOption,
     HermesChatRequest,
     HermesChatResponse,
     HermesWebhookEventRequest,
     IngestEventRequest,
     IngestEventResponse,
+    ProjectCreateRequest,
+    ProjectListResponse,
+    ProjectUpdateRequest,
+    RuntimePreferenceUpdateRequest,
+    SystemConfigResponse,
+    SystemConfigUpdateRequest,
+    TaskBoardCreateRequest,
+    TaskBoardListResponse,
+    TaskBoardUpdateRequest,
 )
+from app.services.hermes_runtime_catalog import build_runtime_state, get_selected_model, set_runtime_preferences
+from app.services.github_project_service import GitHubProjectService
+from app.services.system_config_service import SystemConfigService
 from app.services.cockpit_service import get_cockpit_by_session
 from app.services.ingest_retry_service import DeadLetterQuery, IngestRetryService
 from app.services.retry_worker import RetryWorkerConfig, run_retry_loop
@@ -27,6 +41,9 @@ from app.services.store_factory import build_store
 from app.connectors.registry import build_default_registry
 
 store = build_store()
+github_project_service = GitHubProjectService()
+config_session_factory = store.session_factory if hasattr(store, "session_factory") else None
+system_config_service = SystemConfigService(config_session_factory)
 connector_registry = build_default_registry()
 retry_service = None
 retry_counters = {
@@ -136,10 +153,10 @@ def _build_history_messages(history_messages: list[dict[str, str]], user_message
     return messages
 
 
-def _ask_hermes_via_api(messages: list[dict[str, str]]) -> str:
+def _ask_hermes_via_api(messages: list[dict[str, str]], model_override: str | None = None) -> str:
     base_url = os.getenv("HERMES_API_BASE_URL", "http://host.docker.internal:8642/v1").rstrip("/")
     api_key = os.getenv("HERMES_API_KEY", "")
-    model = os.getenv("HERMES_MODEL", "gpt-5.3-codex")
+    model = model_override or os.getenv("HERMES_MODEL", "gpt-5.3-codex")
     timeout_seconds = float(os.getenv("HERMES_API_TIMEOUT_SECONDS", "120"))
 
     headers = {"Content-Type": "application/json"}
@@ -161,7 +178,25 @@ def _ask_hermes_via_api(messages: list[dict[str, str]]) -> str:
     return content
 
 
-def _ask_hermes_via_cli(messages: list[dict[str, str]]) -> str:
+def _resolve_provider_for_model(model_name: str | None) -> str:
+    if not model_name:
+        return ""
+    try:
+        runtime = build_runtime_state()
+    except Exception:
+        return ""
+
+    for item in runtime.available_model_items:
+        if item.name == model_name and item.provider:
+            return item.provider
+    return ""
+
+
+def _ask_hermes_via_cli(
+    messages: list[dict[str, str]],
+    model_override: str | None = None,
+    provider_override: str | None = None,
+) -> str:
     from subprocess import run
 
     hermes_bin = os.getenv("HERMES_BIN", "hermes")
@@ -174,8 +209,15 @@ def _ask_hermes_via_cli(messages: list[dict[str, str]]) -> str:
     prompt_lines.append(messages[-1]["content"])
     prompt = "\n".join(prompt_lines)
 
+    command: list[str] = [hermes_bin]
+    if provider_override:
+        command.extend(["--provider", provider_override])
+    if model_override:
+        command.extend(["-m", model_override])
+    command.extend(["-z", prompt])
+
     result = run(
-        [hermes_bin, "-z", prompt],
+        command,
         capture_output=True,
         text=True,
         timeout=int(timeout_seconds),
@@ -189,16 +231,25 @@ def _ask_hermes_via_cli(messages: list[dict[str, str]]) -> str:
     return content
 
 
-def ask_hermes_response(history_messages: list[dict[str, str]], user_message: str) -> str:
+def ask_hermes_response(
+    history_messages: list[dict[str, str]],
+    user_message: str,
+) -> str:
     messages = _build_history_messages(history_messages, user_message)
+    model_for_request = get_selected_model() or os.getenv("HERMES_MODEL", "").strip()
+    provider_for_request = _resolve_provider_for_model(model_for_request)
 
     try:
-        return _ask_hermes_via_api(messages)
+        return _ask_hermes_via_api(messages, model_override=model_for_request)
     except httpx.HTTPError:
         cli_fallback_enabled = os.getenv("HERMES_CLI_FALLBACK_ENABLED", "1") == "1"
         if not cli_fallback_enabled:
             raise
-        return _ask_hermes_via_cli(messages)
+        return _ask_hermes_via_cli(
+            messages,
+            model_override=model_for_request,
+            provider_override=provider_for_request,
+        )
 
 
 def _parse_since_datetime(since: str) -> datetime:
@@ -243,15 +294,19 @@ def ingest_hermes_webhook(payload: HermesWebhookEventRequest, request: Request) 
 
 @app.post("/api/v1/connectors/hermes/chat", response_model=HermesChatResponse)
 def hermes_chat(payload: HermesChatRequest, request: Request) -> HermesChatResponse:
-    history_messages = store.get_history_messages("hermes", payload.external_session_id)
+    selected_platform = (payload.platform or "hermes").strip() or "hermes"
+    history_messages = store.get_history_messages(selected_platform, payload.external_session_id)
     try:
-        assistant_message = ask_hermes_response(history_messages, payload.user_message)
+        assistant_message = ask_hermes_response(
+            history_messages,
+            payload.user_message,
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="hermes_unavailable") from exc
 
     user_event_id = f"evt_user_{uuid4().hex}"
     user_ingest = IngestEventRequest(
-        platform="hermes",
+        platform=selected_platform,
         event_id=user_event_id,
         event_type="message_created",
         external_session_id=payload.external_session_id,
@@ -263,7 +318,7 @@ def hermes_chat(payload: HermesChatRequest, request: Request) -> HermesChatRespo
 
     assistant_event_id = f"evt_assistant_{uuid4().hex}"
     assistant_ingest = IngestEventRequest(
-        platform="hermes",
+        platform=selected_platform,
         event_id=assistant_event_id,
         event_type="message_created",
         external_session_id=payload.external_session_id,
@@ -331,9 +386,164 @@ def replay_dead_letter(dlq_id: str, request: Request, payload: DeadLetterReplayR
     raise HTTPException(status_code=409, detail=result.detail)
 
 
+@app.get("/api/v1/runtime/catalog")
+def get_runtime_catalog(platform: str = Query(default="hermes")):
+    normalized_platform = (platform or "hermes").strip() or "hermes"
+    available_platforms = connector_registry.names()
+    if normalized_platform not in available_platforms:
+        raise HTTPException(status_code=404, detail="platform_not_supported")
+
+    runtime = build_runtime_state()
+    runtime_dict = runtime.model_dump()
+    runtime_dict["platform"] = normalized_platform
+    runtime_dict["available_platforms"] = available_platforms
+    return runtime_dict
+
+
+@app.put("/api/v1/runtime/preferences")
+def update_runtime_preferences(payload: RuntimePreferenceUpdateRequest):
+    set_runtime_preferences(
+        selected_model=payload.selected_model,
+        selected_skills=payload.selected_skills,
+        selected_mcp_servers=payload.selected_mcp_servers,
+    )
+    return build_runtime_state().model_dump()
+
+
+@app.get("/api/v1/system/config", response_model=SystemConfigResponse)
+def get_system_config() -> SystemConfigResponse:
+    return system_config_service.get_config()
+
+
+@app.put("/api/v1/system/config/github-token", response_model=SystemConfigResponse)
+def update_github_token(payload: SystemConfigUpdateRequest) -> SystemConfigResponse:
+    system_config_service.update_github_token(payload.github_token)
+    return system_config_service.get_config()
+
+
+@app.get("/api/v1/projects/github/repos", response_model=list[GitHubRepoOption])
+def list_github_repositories() -> list[GitHubRepoOption]:
+    try:
+        token = system_config_service.get_github_token()
+        return github_project_service.list_repositories(token_override=token)
+    except RuntimeError as exc:
+        detail = str(exc)
+        if detail in {"gh_cli_unavailable", "github_api_failed"}:
+            raise HTTPException(status_code=503, detail=detail) from exc
+        raise HTTPException(status_code=502, detail=detail) from exc
+
+
+@app.post("/api/v1/projects/github/repos", response_model=GitHubRepoOption)
+def create_github_repository(payload: GitHubRepoCreateRequest) -> GitHubRepoOption:
+    try:
+        return github_project_service.create_repository(payload)
+    except RuntimeError as exc:
+        detail = str(exc)
+        if detail == "gh_cli_unavailable":
+            raise HTTPException(status_code=503, detail=detail) from exc
+        raise HTTPException(status_code=502, detail=detail) from exc
+
+
+@app.get("/api/v1/projects", response_model=ProjectListResponse)
+def list_projects() -> ProjectListResponse:
+    return ProjectListResponse(items=store.list_projects())
+
+
+@app.post("/api/v1/projects")
+def create_project(payload: ProjectCreateRequest):
+    try:
+        return store.create_project(payload)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {"invalid_github_repository_url", "local_path_outside_workspace"}:
+            raise HTTPException(status_code=422, detail=detail) from exc
+        raise
+
+
+@app.patch("/api/v1/projects/{project_id}")
+def update_project(project_id: str, payload: ProjectUpdateRequest):
+    item = store.update_project(project_id, payload)
+    if item is None:
+        raise HTTPException(status_code=404, detail="project_not_found")
+    return item
+
+
+@app.delete("/api/v1/projects/{project_id}")
+def delete_project(project_id: str):
+    deleted = store.delete_project(project_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="project_not_found")
+    return {"deleted": 1, "project_id": project_id}
+
+
+@app.get("/api/v1/task-board", response_model=TaskBoardListResponse)
+def list_task_board_items(
+    project_id: str | None = Query(default=None),
+    keyword: str | None = Query(default=None),
+) -> TaskBoardListResponse:
+    return TaskBoardListResponse(items=store.list_task_board_items(project_id=project_id, keyword=keyword))
+
+
+@app.post("/api/v1/task-board")
+def create_task_board_item(payload: TaskBoardCreateRequest):
+    try:
+        return store.create_task_board_item(payload)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {
+            "project_not_found",
+            "upstream_task_not_found",
+            "parent_task_not_found",
+        }:
+            raise HTTPException(status_code=422, detail=detail) from exc
+        raise
+
+
+@app.patch("/api/v1/task-board/{task_id}")
+def update_task_board_item(task_id: str, payload: TaskBoardUpdateRequest):
+    try:
+        item = store.update_task_board_item(task_id, payload)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {
+            "project_not_found",
+            "upstream_task_not_found",
+            "parent_task_not_found",
+            "upstream_task_cannot_be_self",
+            "parent_task_cannot_be_self",
+        }:
+            raise HTTPException(status_code=422, detail=detail) from exc
+        raise
+    if item is None:
+        raise HTTPException(status_code=404, detail="task_board_item_not_found")
+    return item
+
+
+@app.delete("/api/v1/task-board/{task_id}")
+def delete_task_board_item(task_id: str):
+    deleted = store.delete_task_board_item(task_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="task_board_item_not_found")
+    return {"deleted": 1, "task_id": task_id}
+
+
 @app.get("/api/v1/sessions")
 def list_sessions():
     return store.list_sessions()
+
+
+@app.delete("/api/v1/sessions/{session_id}")
+def delete_session(session_id: str):
+    deleted = store.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return {"deleted": 1, "session_id": session_id}
+
+
+@app.delete("/api/v1/sessions")
+def clear_sessions():
+    deleted_count = store.clear_sessions()
+    return {"deleted": deleted_count}
 
 
 @app.get("/api/v1/sessions/{session_id}")

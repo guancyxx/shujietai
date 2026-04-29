@@ -7,7 +7,9 @@ Multi-platform agent conversation cockpit MVP.
 Implemented:
 - Docker Compose one-command startup for full stack
 - Backend API based on FastAPI
+- Project creation persists project metadata without auto-cloning repository
 - Frontend cockpit UI based on Vue 3
+- Task board page (navigation + standalone kanban) with project/keyword filters and task CRUD
 - Store factory with default SQLAlchemy backend (memory backend kept for fallback)
 - Alembic migration baseline + replay-audit migration, with roundtrip migration tests
 - Hermes connector endpoints:
@@ -65,9 +67,31 @@ Core MVP:
 - GET /api/v1/dlq (filters: limit, only_unreplayed, platform, since)
 - POST /api/v1/dlq/{dlq_id}/replay (optional header: x-replayed-by; optional body: {"force": true})
 
+Project + system config:
+- GET /api/v1/system/config
+- PUT /api/v1/system/config/github-token
+- GET /api/v1/projects/github/repos
+- POST /api/v1/projects/github/repos
+- GET /api/v1/projects
+- POST /api/v1/projects
+- PATCH /api/v1/projects/{project_id}
+- DELETE /api/v1/projects/{project_id}
+- GET /api/v1/task-board (filters: project_id, keyword)
+- POST /api/v1/task-board
+- PATCH /api/v1/task-board/{task_id}
+- DELETE /api/v1/task-board/{task_id}
+
 Hermes-specific:
 - POST /api/v1/connectors/hermes/webhook
 - POST /api/v1/connectors/hermes/chat
+- GET /api/v1/runtime/catalog
+- PUT /api/v1/runtime/preferences
+
+## Runtime Configuration UX Rule
+
+- New conversation modal is conversation-only: platform + initial message.
+- Model / Skills / MCP are configured in the state panel only, then persisted via runtime preferences API.
+- This enforces "configure before chat" while keeping conversation creation focused on conversation data.
 
 ## Verification Commands
 
@@ -133,6 +157,10 @@ Backend and frontend:
 - VITE_API_BASE_URL
 - CORS_ORIGINS
 
+System config persistence:
+- GitHub token is stored in database table `system_configs` (key: `github_token`) via API.
+- Env `GITHUB_TOKEN` remains optional runtime fallback for memory/non-DB mode only.
+
 Reliability:
 - INGEST_RETRY_ENABLED
 - INGEST_MAX_RETRIES
@@ -147,6 +175,11 @@ Hermes relay:
 - HERMES_CLI_FALLBACK_ENABLED
 - HERMES_BIN
 
+Runtime preference behavior:
+- Conversation create/send APIs no longer accept model/skill/MCP selection fields.
+- Runtime preferences are configured separately via PUT /api/v1/runtime/preferences.
+- Chat relay uses the persisted runtime preferences (selected_model/selected_skills/selected_mcp_servers).
+
 Mount-related:
 - HERMES_CLI_PATH
 - HERMES_AGENT_ROOT
@@ -158,6 +191,8 @@ Mount-related:
 - docs/superpowers/specs/2026-04-27-shujietai-mvp-design.md
 - docs/plans/2026-04-27-shujietai-mvp-implementation-plan.md
 - docs/adr/0001-mvp-store-and-connector-extension.md
+- docs/adr/0002-system-config-database-storage.md
+- docs/adr/0003-project-create-metadata-only.md
 - docs/status/2026-04-28-project-status.md
 - docs/status/2026-04-28-sqlalchemy-cutover-runbook.md
 - docs/status/2026-04-28-implementation-timeline.md

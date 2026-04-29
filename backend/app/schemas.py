@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
 TaskLane = Literal["todo", "doing", "done"]
+TaskBoardStatus = Literal["draft", "in_progress", "blocked", "completed", "cancelled"]
 MessageRole = Literal["user", "assistant", "system", "tool"]
 
 
@@ -64,6 +66,101 @@ class HermesChatRequest(BaseModel):
     external_session_id: str
     user_message: str = Field(min_length=1, max_length=8000)
     title: str | None = None
+    platform: str | None = None
+
+
+class RuntimePreferenceUpdateRequest(BaseModel):
+    selected_model: str | None = None
+    selected_skills: list[str] | None = None
+    selected_mcp_servers: list[str] | None = None
+
+
+class SystemConfigUpdateRequest(BaseModel):
+    github_token: str = Field(default="", max_length=512)
+
+
+class SystemConfigResponse(BaseModel):
+    github_token_configured: bool
+
+
+class ProjectCreateRequest(BaseModel):
+    repository_url: str = Field(min_length=1, max_length=1024)
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+
+
+class ProjectUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class GitHubRepoOption(BaseModel):
+    name: str
+    full_name: str
+    url: str
+    description: str = ""
+
+
+class GitHubRepoCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+    private: bool = False
+
+
+class ProjectItem(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    description: str
+    repository_url: str
+    repository_name: str
+    local_path: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectListResponse(BaseModel):
+    items: list[ProjectItem]
+
+
+class TaskBoardCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=4000)
+    ai_platform: str = Field(default="hermes", min_length=1, max_length=64)
+    project_id: UUID | None = None
+    parent_task_id: UUID | None = None
+    upstream_task_id: UUID | None = None
+    status: TaskBoardStatus = "draft"
+
+
+class TaskBoardUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+    ai_platform: str | None = Field(default=None, min_length=1, max_length=64)
+    project_id: UUID | None = None
+    parent_task_id: UUID | None = None
+    upstream_task_id: UUID | None = None
+    status: TaskBoardStatus | None = None
+
+
+class TaskBoardItem(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    ai_platform: str
+    project_id: UUID | None = None
+    project_name: str | None = None
+    upstream_task_id: UUID | None = None
+    upstream_task_name: str | None = None
+    parent_task_id: UUID | None = None
+    parent_task_name: str | None = None
+    status: TaskBoardStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskBoardListResponse(BaseModel):
+    items: list[TaskBoardItem]
 
 
 class HermesChatResponse(BaseModel):
@@ -131,11 +228,36 @@ class SessionMetrics(BaseModel):
     updated_at: datetime
 
 
+class RuntimeSkillItem(BaseModel):
+    name: str
+    description: str = ""
+
+
+class RuntimeModelItem(BaseModel):
+    name: str
+    provider: str = ""
+
+
+class RuntimeState(BaseModel):
+    current_model: str
+    current_model_provider: str = ""
+    selected_model: str
+    selected_model_provider: str = ""
+    available_models: list[str] = Field(default_factory=list)
+    available_model_items: list[RuntimeModelItem] = Field(default_factory=list)
+    selected_skills: list[str] = Field(default_factory=list)
+    available_skills: list[str] = Field(default_factory=list)
+    available_skill_items: list[RuntimeSkillItem] = Field(default_factory=list)
+    selected_mcp_servers: list[str] = Field(default_factory=list)
+    available_mcp_servers: list[str] = Field(default_factory=list)
+
+
 class CockpitResponse(BaseModel):
     session: SessionDetail
     tasks: list[TaskItem]
     timeline: TimelineResponse
     metrics: SessionMetrics
+    runtime: RuntimeState
 
 
 class DeadLetterItem(BaseModel):
