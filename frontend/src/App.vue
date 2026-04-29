@@ -1,5 +1,7 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 
@@ -54,6 +56,10 @@ const creatingTaskBoardItem = ref(false)
 const updatingTaskBoardItem = ref(false)
 const deletingTaskBoardItemId = ref('')
 const startingConversationFromTask = ref(false)
+const streamingContent = ref('')        // Current streaming assistant message content
+const isStreaming = ref(false)           // Whether a stream is in progress
+const streamAbortController = ref(null) // AbortController for cancelling streams
+const timelineScrollRef = ref(null)   // Ref for auto-scrolling timeline container
 const editingTaskBoardItemId = ref('')
 const taskBoardCreateForm = ref({
   name: '',
@@ -169,6 +175,29 @@ const roleLabelMap = {
   system: '系统',
   tool: '工具',
 }
+
+// Render markdown content safely with DOMPurify
+function renderMarkdown(text) {
+  if (!text) return ''
+  const html = marked.parse(text, { breaks: true, gfm: true })
+  return DOMPurify.sanitize(html)
+}
+
+// Merged timeline: historical messages + streaming assistant message
+const displayMessages = computed(() => {
+  const msgs = [...(timeline.value.messages || [])]
+  if (isStreaming.value && streamingContent.value) {
+    msgs.push({
+      id: 'streaming',
+      role: 'assistant',
+      content: streamingContent.value,
+      content_type: 'text/markdown',
+      created_at: new Date().toISOString(),
+      meta_json: { streaming: true },
+    })
+  }
+  return msgs
+})
 
 const taskLanes = computed(() => {
   const laneMap = { todo: [], doing: [], done: [] }
@@ -722,6 +751,7 @@ async function startConversationFromTask(task) {
     const platform = task.ai_platform || 'hermes'
 
     // 1. Create local session with system prompt via ingest
+    //    (only system message; user message will be ingested by the streaming endpoint)
     const systemEventId = `evt_system_${Date.now()}_1`
     await postJson(`${apiBase}/api/v1/events/ingest`, {
       platform,
@@ -733,18 +763,6 @@ async function startConversationFromTask(task) {
       message: { role: 'system', content: systemPrompt },
     })
 
-    // 2. Create initial user message via ingest
-    const userEventId = `evt_user_${Date.now()}_2`
-    const ingestResult = await postJson(`${apiBase}/api/v1/events/ingest`, {
-      platform,
-      event_id: userEventId,
-      event_type: 'message_created',
-      external_session_id: externalSessionId,
-      title: task.name,
-      payload_json: { source: 'task-board' },
-      message: { role: 'user', content: `开始执行任务：${task.name}` },
-    })
-
     await loadSessions()
     const matched = sessions.value.find((s) => s.external_session_id === externalSessionId)
     if (matched) {
@@ -754,23 +772,93 @@ async function startConversationFromTask(task) {
     activePage.value = 'chat'
     await loadSessionData()
 
-    // 3. Try to get assistant response (best-effort, non-blocking)
-    //    Send a brief prompt; do NOT re-send system_prompt or duplicate user_message
-    //    since they were already ingested into the session history.
+    // 2. Stream assistant response using SSE
+    //    Backend will ingest user message and stream back assistant reply.
+    //    Pass system_prompt so backend uses it for the first-turn context.
+    isStreaming.value = true
+    streamingContent.value = ''
+    const abortCtrl = new AbortController()
+    streamAbortController.value = abortCtrl
+
+    const promptMessage = `请根据上述任务上下文开始工作`
+
+    // Optimistically add user message
+    const optimisticUserMsg = {
+      id: `optimistic_user_${Date.now()}`,
+      role: 'user',
+      content: promptMessage,
+      created_at: new Date().toISOString(),
+      meta_json: {},
+    }
+    if (!timeline.value.messages) timeline.value.messages = []
+    timeline.value.messages.push(optimisticUserMsg)
+
     try {
-      const chatPayload = {
-        external_session_id: externalSessionId,
-        title: task.name,
-        platform,
-        user_message: '请根据上述任务上下文开始工作',
+      const response = await fetch(`${apiBase}/api/v1/connectors/hermes/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          external_session_id: externalSessionId,
+          title: task.name,
+          platform,
+          user_message: promptMessage,
+        }),
+        signal: abortCtrl.signal,
+      })
+
+      if (response.ok) {
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ') || line.trim() === 'data: [DONE]') continue
+            const data = line.slice(6)
+            try {
+              const event = JSON.parse(data)
+              if (event.type === 'content' && event.content) {
+                streamingContent.value += event.content
+                await nextTick()
+                if (timelineScrollRef.value) {
+                  timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+                }
+              } else if (event.type === 'tool_call') {
+                streamingContent.value += `\n🔧 _Calling: **${event.function_name || 'tool'}**_\n`
+                await nextTick()
+                if (timelineScrollRef.value) {
+                  timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+                }
+              } else if (event.type === 'error') {
+                errorMessage.value = `AI Error: ${event.detail || 'Unknown'}`
+              } else if (event.type === 'done') {
+                // Remove optimistic user msg, replace with real backend data
+                const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
+                if (idx !== -1) timeline.value.messages.splice(idx, 1)
+                await loadSessions()
+                await loadSessionData()
+              }
+            } catch {
+              // Ignore malformed JSON
+            }
+          }
+        }
       }
-      const chatResult = await postJsonTimeout(`${apiBase}/api/v1/connectors/hermes/chat`, chatPayload, 60000)
-      if (chatResult && chatResult.assistant_message) {
-        // Refresh timeline to show the new assistant + user messages from hermes/chat
-        await loadSessionData()
-      }
-    } catch (_assistantError) {
-      // Assistant response is best-effort; session is already created
+    } catch (_streamError) {
+      // Stream is best-effort; session already created
+      const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
+      if (idx !== -1) timeline.value.messages.splice(idx, 1)
+    } finally {
+      isStreaming.value = false
+      streamAbortController.value = null
+      streamingContent.value = ''
     }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
@@ -1125,32 +1213,113 @@ function handleCreateInitialMessageKeydown(event) {
 
 async function sendMessageToHermes() {
   const trimmed = composerText.value.trim()
-  if (!trimmed || sending.value) {
+  if (!trimmed || sending.value || isStreaming.value) {
     return
   }
 
+  const externalSessionId = selectedExternalSessionId.value || selectedSession.value?.external_session_id || `web_${Date.now()}`
+  const title = selectedSession.value?.title || 'Web Chat Session'
+
   sending.value = true
+  isStreaming.value = true
+  streamingContent.value = ''
   errorMessage.value = ''
+  const abortCtrl = new AbortController()
+  streamAbortController.value = abortCtrl
+  composerText.value = ''
+
+  // Add user message optimistically to local timeline
+  const optimisticUserMsg = {
+    id: `optimistic_user_${Date.now()}`,
+    role: 'user',
+    content: trimmed,
+    created_at: new Date().toISOString(),
+    meta_json: {},
+  }
+  // Temporarily inject into timeline for display
+  if (!timeline.value.messages) timeline.value.messages = []
+  timeline.value.messages.push(optimisticUserMsg)
+
   try {
-    const externalSessionId = selectedExternalSessionId.value || selectedSession.value?.external_session_id || `web_${Date.now()}`
-    const payload = {
-      external_session_id: externalSessionId,
-      title: selectedSession.value?.title || 'Web Chat Session',
-      user_message: trimmed,
+    // Backend streaming endpoint handles user message ingest + assistant stream
+    const response = await fetch(`${apiBase}/api/v1/connectors/hermes/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        external_session_id: externalSessionId,
+        title,
+        platform: 'hermes',
+        user_message: trimmed,
+      }),
+      signal: abortCtrl.signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Stream request failed: ${response.status}`)
     }
-    await postJson(`${apiBase}/api/v1/connectors/hermes/chat`, payload)
-    composerText.value = ''
-    await loadSessions()
-    const matched = sessions.value.find((item) => item.external_session_id === externalSessionId)
-    if (matched) {
-      selectedSessionId.value = matched.id
-      selectedExternalSessionId.value = matched.external_session_id
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ') || line.trim() === 'data: [DONE]') continue
+        const data = line.slice(6)
+        try {
+          const event = JSON.parse(data)
+          if (event.type === 'session') {
+            // Backend created/linked the session
+            if (event.session_id && !selectedSessionId.value) {
+              selectedSessionId.value = event.session_id
+            }
+          } else if (event.type === 'content' && event.content) {
+            streamingContent.value += event.content
+            // Auto-scroll during streaming
+            await nextTick()
+            if (timelineScrollRef.value) {
+              timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+            }
+          } else if (event.type === 'tool_call') {
+            streamingContent.value += `\n🔧 _Calling: **${event.function_name || 'tool'}**_\n`
+            await nextTick()
+            if (timelineScrollRef.value) {
+              timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
+            }
+          } else if (event.type === 'error') {
+            errorMessage.value = `AI Error: ${event.detail || 'Unknown'}`
+          } else if (event.type === 'done') {
+            // Stream finished, backend already ingested assistant message.
+            // Remove optimistic user message (backend ingested the real one).
+            const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
+            if (idx !== -1) timeline.value.messages.splice(idx, 1)
+            await loadSessions()
+            await loadSessionData()
+          }
+        } catch {
+          // Ignore malformed JSON
+        }
+      }
     }
-    await loadSessionData()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
+    if (error.name !== 'AbortError') {
+      errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
+    }
+    // Remove optimistic user message on error
+    const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
+    if (idx !== -1) timeline.value.messages.splice(idx, 1)
   } finally {
     sending.value = false
+    isStreaming.value = false
+    streamAbortController.value = null
+    streamingContent.value = ''
   }
 }
 
@@ -1291,17 +1460,20 @@ onMounted(refreshData)
         <article class="panel timeline-panel">
           <h2>对话时间线</h2>
 
-          <div class="timeline-scroll">
-            <div v-if="timeline.messages?.length === 0" class="muted">暂无消息</div>
+          <div class="timeline-scroll" ref="timelineScrollRef">
+            <div v-if="displayMessages.length === 0" class="muted">暂无消息</div>
             <div
-              v-for="message in timeline.messages"
+              v-for="message in displayMessages"
               :key="message.id"
               class="timeline-item"
-              :class="messageSideClass(message.role)"
+              :class="[messageSideClass(message.role), message.role === 'assistant' ? 'msg-assistant' : '', message.meta_json?.streaming ? 'streaming' : '']"
             >
               <div class="role-chip" :class="roleClass(message.role)">{{ roleLabelMap[message.role] || message.role }}</div>
-              <div class="timeline-meta">{{ new Date(message.created_at).toLocaleString() }}</div>
-              <div class="timeline-content">{{ message.content }}</div>
+              <div class="timeline-meta">
+                {{ new Date(message.created_at).toLocaleString() }}
+                <span v-if="message.meta_json?.streaming" class="streaming-indicator">生成中…</span>
+              </div>
+              <div class="timeline-content" v-html="message.role === 'assistant' ? renderMarkdown(message.content) : message.content"></div>
             </div>
           </div>
 
@@ -1309,11 +1481,14 @@ onMounted(refreshData)
             <textarea
               v-model="composerText"
               class="composer-input"
-              :disabled="sending"
+              :disabled="sending || isStreaming"
               placeholder="输入消息，直接与 Hermes 对话"
               @keydown="handleComposerKeydown"
             ></textarea>
-            <button class="composer-send" type="submit" :disabled="sending || !composerText.trim()">
+            <button v-if="isStreaming" class="composer-send composer-cancel" type="button" @click="streamAbortController?.abort()">
+              取消
+            </button>
+            <button v-else class="composer-send" type="submit" :disabled="sending || !composerText.trim()">
               {{ sending ? '发送中...' : '发送' }}
             </button>
           </form>

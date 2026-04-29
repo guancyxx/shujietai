@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json as json_module
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -9,6 +10,7 @@ from uuid import uuid4
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from app.schemas import (
     DeadLetterListResponse,
@@ -352,6 +354,145 @@ def hermes_chat(payload: HermesChatRequest, request: Request) -> HermesChatRespo
         session_id=session_id,
         event_id=assistant_event_id,
         assistant_message=assistant_message,
+    )
+
+
+async def _stream_hermes_chat(payload: HermesChatRequest):
+    """Async generator yielding SSE events for streaming Hermes chat."""
+    selected_platform = (payload.platform or "hermes").strip() or "hermes"
+    history_messages = store.get_history_messages(selected_platform, payload.external_session_id)
+
+    messages = _build_history_messages(
+        history_messages, payload.user_message, system_prompt=payload.system_prompt,
+    )
+    model_for_request = get_selected_model() or os.getenv("HERMES_MODEL", "").strip()
+
+    base_url = os.getenv("HERMES_API_BASE_URL", "http://host.docker.internal:8643/v1").rstrip("/")
+    api_key = os.getenv("HERMES_API_KEY", "")
+    timeout_seconds = float(os.getenv("HERMES_API_TIMEOUT_SECONDS", "120"))
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    # Ingest user message before streaming starts
+    if payload.system_prompt and payload.system_prompt.strip() and not history_messages:
+        store.ingest(IngestEventRequest(
+            platform=selected_platform,
+            event_id=f"evt_system_{uuid4().hex}",
+            event_type="message_created",
+            external_session_id=payload.external_session_id,
+            title=payload.title,
+            payload_json={"source": "shujietai-chat-stream"},
+            message={"role": "system", "content": payload.system_prompt.strip()},
+        ))
+
+    user_event_id = f"evt_user_{uuid4().hex}"
+    session_id, _ = store.ingest(IngestEventRequest(
+        platform=selected_platform,
+        event_id=user_event_id,
+        event_type="message_created",
+        external_session_id=payload.external_session_id,
+        title=payload.title,
+        payload_json={"source": "shujietai-chat-stream"},
+        message={"role": "user", "content": payload.user_message},
+    ))
+
+    # Yield session info as first event
+    yield f"data: {json_module.dumps({'type': 'session', 'session_id': session_id, 'user_event_id': user_event_id})}\n\n"
+
+    # Stream from Hermes API
+    request_body = {
+        "model": model_for_request or "hermes-agent",
+        "messages": messages,
+        "stream": True,
+    }
+
+    full_content = ""
+    tool_calls_log = []
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=10.0)) as client:
+        async with client.stream(
+            "POST",
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json=request_body,
+        ) as response:
+            if response.status_code != 200:
+                error_body = await response.aread()
+                yield f"data: {json_module.dumps({'type': 'error', 'status': response.status_code, 'detail': error_body.decode(errors='replace')[:200]})}\n\n"
+                return
+
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = json_module.loads(data_str)
+                except json_module.JSONDecodeError:
+                    continue
+
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                choice = choices[0]
+                delta = choice.get("delta", {})
+
+                # Handle content delta
+                if "content" in delta and delta["content"]:
+                    full_content += delta["content"]
+                    yield f"data: {json_module.dumps({'type': 'content', 'content': delta['content']})}\n\n"
+
+                # Handle tool calls delta (agent thinking/tool-use chain)
+                if "tool_calls" in delta:
+                    for tc in delta["tool_calls"]:
+                        tc_info = {
+                            "index": tc.get("index", 0),
+                            "id": tc.get("id", ""),
+                            "function_name": tc.get("function", {}).get("name", ""),
+                            "function_args_delta": tc.get("function", {}).get("arguments", ""),
+                        }
+                        tool_calls_log.append(tc_info)
+                        yield f"data: {json_module.dumps({'type': 'tool_call', **tc_info})}\n\n"
+
+                # Handle finish_reason
+                finish = choice.get("finish_reason")
+                if finish:
+                    usage = chunk.get("usage", {})
+                    yield f"data: {json_module.dumps({'type': 'finish', 'reason': finish, 'usage': usage})}\n\n"
+
+    # Ingest the completed assistant message
+    assistant_event_id = f"evt_assistant_{uuid4().hex}"
+    meta = {}
+    if tool_calls_log:
+        meta["tool_calls"] = tool_calls_log
+    store.ingest(IngestEventRequest(
+        platform=selected_platform,
+        event_id=assistant_event_id,
+        event_type="message_created",
+        external_session_id=payload.external_session_id,
+        title=payload.title,
+        payload_json={"source": "shujietai-chat-stream"},
+        message={"role": "assistant", "content": full_content},
+    ))
+
+    # Final done event with complete data
+    yield f"data: {json_module.dumps({'type': 'done', 'event_id': assistant_event_id, 'session_id': session_id, 'content_length': len(full_content)})}\n\n"
+
+
+@app.post("/api/v1/connectors/hermes/chat/stream")
+async def hermes_chat_stream(payload: HermesChatRequest, request: Request):
+    """Streaming variant of hermes/chat using SSE."""
+    return StreamingResponse(
+        _stream_hermes_chat(payload),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
