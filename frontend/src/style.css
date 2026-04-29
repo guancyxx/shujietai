@@ -1160,9 +1160,13 @@ h2 {
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
-.project-card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(94, 220, 255, 0.74);
+.project-card-clickable {
+  cursor: pointer;
+}
+
+.project-card-clickable:hover {
+  transform: translateY(-3px);
+  border-color: rgba(94, 220, 255, 0.85);
   box-shadow:
     0 0 0 1px rgba(113, 215, 255, 0.24) inset,
     0 0 20px rgba(66, 194, 255, 0.24),

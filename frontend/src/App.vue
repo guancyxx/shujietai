@@ -685,6 +685,13 @@ function resetTaskBoardCreateForm() {
   }
 }
 
+function openTaskBoardByProject(project) {
+  taskBoardProjectFilter.value = project.id
+  taskBoardKeyword.value = ''
+  taskBoardStatusFilter.value = ''
+  activePage.value = 'task-board'
+}
+
 function openTaskBoardCreateModal() {
   resetTaskBoardCreateForm()
   isTaskBoardCreateModalOpen.value = true
@@ -1225,7 +1232,7 @@ onMounted(refreshData)
           </div>
 
           <div class="project-list" v-if="filteredProjects.length > 0">
-            <div v-for="item in filteredProjects" :key="item.id" class="project-card">
+            <div v-for="item in filteredProjects" :key="item.id" class="project-card project-card-clickable" @click="openTaskBoardByProject(item)">
               <div class="project-card-top">
                 <div class="project-title-wrap">
                   <div class="project-name">{{ item.name }}</div>
