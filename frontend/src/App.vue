@@ -485,6 +485,25 @@ async function postJson(url, payload) {
   return response.json()
 }
 
+async function postJsonTimeout(url, payload, timeoutMs) {
+  const controller = new AbortController()
+  const id = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      throw new Error(`Request failed: ${response.status}`)
+    }
+    return await response.json()
+  } finally {
+    clearTimeout(id)
+  }
+}
+
 async function putJson(url, payload) {
   const response = await fetch(url, {
     method: 'PUT',
@@ -700,14 +719,32 @@ async function startConversationFromTask(task) {
   try {
     const externalSessionId = `web_${Date.now()}`
     const systemPrompt = buildTaskSystemPrompt(task)
-    const payload = {
+    const platform = task.ai_platform || 'hermes'
+
+    // 1. Create local session with system prompt via ingest
+    const systemEventId = `evt_system_${Date.now()}_1`
+    await postJson(`${apiBase}/api/v1/events/ingest`, {
+      platform,
+      event_id: systemEventId,
+      event_type: 'message_created',
       external_session_id: externalSessionId,
       title: task.name,
-      platform: task.ai_platform || 'hermes',
-      user_message: `开始执行任务：${task.name}`,
-      system_prompt: systemPrompt,
-    }
-    await postJson(`${apiBase}/api/v1/connectors/hermes/chat`, payload)
+      payload_json: { source: 'task-board', task_id: task.id },
+      message: { role: 'system', content: systemPrompt },
+    })
+
+    // 2. Create initial user message via ingest
+    const userEventId = `evt_user_${Date.now()}_2`
+    const ingestResult = await postJson(`${apiBase}/api/v1/events/ingest`, {
+      platform,
+      event_id: userEventId,
+      event_type: 'message_created',
+      external_session_id: externalSessionId,
+      title: task.name,
+      payload_json: { source: 'task-board' },
+      message: { role: 'user', content: `开始执行任务：${task.name}` },
+    })
+
     await loadSessions()
     const matched = sessions.value.find((s) => s.external_session_id === externalSessionId)
     if (matched) {
@@ -716,6 +753,33 @@ async function startConversationFromTask(task) {
     }
     activePage.value = 'chat'
     await loadSessionData()
+
+    // 3. Try to get assistant response in background (non-blocking)
+    try {
+      const chatPayload = {
+        external_session_id: externalSessionId,
+        title: task.name,
+        platform,
+        user_message: `开始执行任务：${task.name}`,
+        system_prompt: systemPrompt,
+      }
+      const chatResult = await postJsonTimeout(`${apiBase}/api/v1/connectors/hermes/chat`, chatPayload, 15000)
+      if (chatResult && chatResult.assistant_message) {
+        // Ingest the assistant response
+        await postJson(`${apiBase}/api/v1/events/ingest`, {
+          platform,
+          event_id: `evt_assistant_${Date.now()}_3`,
+          event_type: 'message_created',
+          external_session_id: externalSessionId,
+          title: task.name,
+          payload_json: { source: 'shujietai-chat' },
+          message: { role: 'assistant', content: chatResult.assistant_message },
+        })
+        await loadSessionData()
+      }
+    } catch (_assistantError) {
+      // Assistant response is best-effort; session is already created
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
   } finally {
