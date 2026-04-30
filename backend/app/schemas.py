@@ -293,3 +293,58 @@ class DeadLetterReplayResponse(BaseModel):
 
 class DeadLetterReplayRequest(BaseModel):
     force: bool = False
+
+
+# --- Dispatch Orchestration Layer (ADR-0004) ---
+
+DispatchTaskStatus = Literal[
+    "queued", "running", "awaiting_input", "paused",
+    "completed", "failed", "cancelled", "aborted",
+]
+
+
+class DispatchCreateRequest(BaseModel):
+    task_board_item_id: str | None = Field(default=None, max_length=64)
+    ai_platform: str = Field(default="hermes", min_length=1, max_length=64)
+    initial_prompt: str = Field(min_length=1, max_length=16000)
+    system_prompt: str | None = Field(default=None, max_length=4000)
+    model: str | None = Field(default=None, max_length=128)
+    skills: list[str] | None = None
+    mcp_servers: list[str] | None = None
+
+
+class DispatchResumeRequest(BaseModel):
+    user_message: str = Field(min_length=1, max_length=8000)
+
+
+class DispatchTaskItem(BaseModel):
+    id: str
+    task_board_item_id: str | None = None
+    status: DispatchTaskStatus
+    ai_platform: str
+    external_session_id: str | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
+    initial_prompt: str
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DispatchTaskListResponse(BaseModel):
+    items: list[DispatchTaskItem]
+
+
+class DispatchEventItem(BaseModel):
+    id: str
+    task_id: str
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class DispatchEventListResponse(BaseModel):
+    items: list[DispatchEventItem]
+
+
+class EmergencyStopResponse(BaseModel):
+    cancelled_count: int

@@ -108,6 +108,31 @@ class SystemConfigEntity(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class DispatchTaskEntity(Base):
+    __tablename__ = "dispatch_tasks"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_board_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    ai_platform: Mapped[str] = mapped_column(String(64), nullable=False, default="hermes")
+    external_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    initial_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DispatchEventEntity(Base):
+    __tablename__ = "dispatch_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class IngestRetryEntity(Base):
     __tablename__ = "ingest_retries"
 

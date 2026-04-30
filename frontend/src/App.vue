@@ -1,7 +1,10 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { useWebSocket } from './composables/useWebSocket.js'
+import { useDispatchTask } from './composables/useDispatchTask.js'
+import { useDispatchHistory } from './composables/useDispatchHistory.js'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 
@@ -60,6 +63,77 @@ const streamingContent = ref('')        // Current streaming assistant message c
 const isStreaming = ref(false)           // Whether a stream is in progress
 const streamAbortController = ref(null) // AbortController for cancelling streams
 const timelineScrollRef = ref(null)   // Ref for auto-scrolling timeline container
+
+// Dispatch orchestration layer (ADR-0004) — replaces direct SSE with async dispatch + WebSocket
+const {
+  activeTaskId: dispatchTaskId,
+  activeTask: dispatchActiveTask,
+  taskEvents: dispatchTaskEvents,
+  taskLoading: dispatchLoading,
+  taskError: dispatchError,
+  dispatchMessages,
+  isTaskRunning: dispatchIsRunning,
+  isTaskAwaitingInput: dispatchAwaitingInput,
+  isTaskResumable: dispatchIsResumable,
+  isTaskCancellable: dispatchIsCancellable,
+  dispatchStatusLabelMap,
+  dispatchStatusClassMap,
+  createDispatchTask,
+  resumeDispatchTask,
+  cancelDispatchTask,
+  abortDispatchTask,
+  clearActiveTask,
+} = useDispatchTask()
+
+const {
+  allTasks: allDispatchTasks,
+  filteredTasks: filteredDispatchTasks,
+  taskStats: dispatchStats,
+  historyLoading: dispatchHistoryLoading,
+  historyError: dispatchHistoryError,
+  statusFilter: dispatchHistoryStatusFilter,
+  fetchTaskHistory,
+  fetchTaskEvents,
+} = useDispatchHistory()
+
+const dispatchDetailTask = ref(null)
+const dispatchDetailEvents = ref([])
+
+async function switchToDispatchHistory() {
+  activePage.value = 'dispatch-history'
+  await refreshDispatchHistory()
+}
+
+async function refreshDispatchHistory() {
+  await fetchTaskHistory(dispatchHistoryStatusFilter.value)
+}
+
+async function viewDispatchTaskDetail(task) {
+  dispatchDetailTask.value = task
+  dispatchDetailEvents.value = []
+  try {
+    const data = await fetchTaskEvents(task.id)
+    dispatchDetailEvents.value = data.events || data || []
+  } catch { /* ignore */ }
+}
+
+async function resumeFromHistory(task) {
+  // Set as active task in the dispatch composable and switch to chat page
+  activeTaskId.value = task.id
+  activeTask.value = task
+  dispatchDetailTask.value = null
+  activePage.value = 'chat'
+}
+
+async function cancelFromHistory(task) {
+  try {
+    await fetch(`${apiBase}/api/v1/dispatch/${task.id}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    await refreshDispatchHistory()
+    dispatchDetailTask.value = null
+  } catch { /* ignore */ }
+}
+
+const { connected: wsConnected, connect: wsConnect } = useWebSocket()
 const editingTaskBoardItemId = ref('')
 const taskBoardCreateForm = ref({
   name: '',
@@ -183,8 +257,12 @@ function renderMarkdown(text) {
   return DOMPurify.sanitize(html)
 }
 
-// Merged timeline: historical messages + streaming assistant message
+// Merged timeline: historical messages + dispatch messages (via WebSocket) + streaming assistant message
 const displayMessages = computed(() => {
+  // If there is an active dispatch task, show dispatch messages instead of legacy session messages
+  if (dispatchTaskId.value && dispatchMessages.value.length > 0) {
+    return dispatchMessages.value
+  }
   const msgs = [...(timeline.value.messages || [])]
   if (isStreaming.value && streamingContent.value) {
     msgs.push({
@@ -494,6 +572,13 @@ function formatSessionTime(value) {
   return parsed.toLocaleString()
 }
 
+function formatTime(value) {
+  if (!value) return '-'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return '-'
+  return parsed.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
 async function fetchJson(url) {
   const response = await fetch(url)
   if (!response.ok) {
@@ -746,133 +831,28 @@ async function startConversationFromTask(task) {
   startingConversationFromTask.value = true
   errorMessage.value = ''
   try {
-    const externalSessionId = `web_${Date.now()}`
     const systemPrompt = buildTaskSystemPrompt(task)
     const platform = task.ai_platform || 'hermes'
+    const promptMessage = '请根据上述任务上下文开始工作'
 
-    // 1. Create local session with system prompt via ingest
-    //    (only system message; user message will be ingested by the streaming endpoint)
-    const systemEventId = `evt_system_${Date.now()}_1`
-    await postJson(`${apiBase}/api/v1/events/ingest`, {
-      platform,
-      event_id: systemEventId,
-      event_type: 'message_created',
-      external_session_id: externalSessionId,
-      title: task.name,
-      payload_json: { source: 'task-board', task_id: task.id },
-      message: { role: 'system', content: systemPrompt },
+    // Use dispatch orchestration layer instead of direct SSE (ADR-0004)
+    await createDispatchTask({
+      aiPlatform: platform,
+      initialPrompt: promptMessage,
+      systemPrompt,
+      model: selectedModel.value || '',
+      skills: [...selectedSkills.value],
+      mcpServers: [...selectedMcpServers.value],
+      taskBoardItemId: task.id,
     })
 
-    await loadSessions()
-    const matched = sessions.value.find((s) => s.external_session_id === externalSessionId)
-    if (matched) {
-      selectedSessionId.value = matched.id
-      selectedExternalSessionId.value = matched.external_session_id
-    }
+    // Switch to chat page to show the dispatch task progress
     activePage.value = 'chat'
-    await loadSessionData()
 
-    // 2. Stream assistant response using SSE
-    //    Backend will ingest user message and stream back assistant reply.
-    //    Pass system_prompt so backend uses it for the first-turn context.
-    isStreaming.value = true
-    streamingContent.value = ''
-    const abortCtrl = new AbortController()
-    streamAbortController.value = abortCtrl
-
-    const promptMessage = `请根据上述任务上下文开始工作`
-
-    // Optimistically add user message
-    const optimisticUserMsg = {
-      id: `optimistic_user_${Date.now()}`,
-      role: 'user',
-      content: promptMessage,
-      created_at: new Date().toISOString(),
-      meta_json: {},
-    }
-    if (!timeline.value.messages) timeline.value.messages = []
-    timeline.value.messages.push(optimisticUserMsg)
-    // Scroll to bottom after optimistic user message appears
+    // Auto-scroll to bottom
     await nextTick()
     if (timelineScrollRef.value) {
       timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-    }
-
-    try {
-      const response = await fetch(`${apiBase}/api/v1/connectors/hermes/chat/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          external_session_id: externalSessionId,
-          title: task.name,
-          platform,
-          user_message: promptMessage,
-        }),
-        signal: abortCtrl.signal,
-      })
-
-      if (response.ok) {
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ') || line.trim() === 'data: [DONE]') continue
-            const data = line.slice(6)
-            try {
-              const event = JSON.parse(data)
-              if (event.type === 'content' && event.content) {
-                streamingContent.value += event.content
-                await nextTick()
-                if (timelineScrollRef.value) {
-                  timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-                }
-              } else if (event.type === 'tool_call') {
-                streamingContent.value += `\n🔧 _Calling: **${event.function_name || 'tool'}**_\n`
-                await nextTick()
-                if (timelineScrollRef.value) {
-                  timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-                }
-              } else if (event.type === 'error') {
-                errorMessage.value = `AI Error: ${event.detail || 'Unknown'}`
-              } else if (event.type === 'done') {
-                // Replace timeline atomically — loadSessionData will overwrite
-                // the optimistic user msg with real backend data, no flicker.
-                await loadSessions()
-                await loadSessionData()
-                await nextTick()
-                if (timelineScrollRef.value) {
-                  timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-                }
-              }
-            } catch {
-              // Ignore malformed JSON
-            }
-          }
-        }
-      }
-    } catch (_streamError) {
-      // Stream is best-effort; session already created
-      // Remove optimistic user msg on stream error (no loadSessionData replacement)
-      const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
-      if (idx !== -1) timeline.value.messages.splice(idx, 1)
-    } finally {
-      isStreaming.value = false
-      streamAbortController.value = null
-      streamingContent.value = ''
-      // Final scroll to bottom
-      await nextTick()
-      if (timelineScrollRef.value) {
-        timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-      }
     }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
@@ -1227,128 +1207,42 @@ function handleCreateInitialMessageKeydown(event) {
 
 async function sendMessageToHermes() {
   const trimmed = composerText.value.trim()
-  if (!trimmed || sending.value || isStreaming.value) {
+  if (!trimmed || sending.value || dispatchIsRunning.value) {
     return
   }
 
-  const externalSessionId = selectedExternalSessionId.value || selectedSession.value?.external_session_id || `web_${Date.now()}`
-  const title = selectedSession.value?.title || 'Web Chat Session'
-
   sending.value = true
-  isStreaming.value = true
-  streamingContent.value = ''
   errorMessage.value = ''
-  const abortCtrl = new AbortController()
-  streamAbortController.value = abortCtrl
   composerText.value = ''
 
-  // Add user message optimistically to local timeline
-  const optimisticUserMsg = {
-    id: `optimistic_user_${Date.now()}`,
-    role: 'user',
-    content: trimmed,
-    created_at: new Date().toISOString(),
-    meta_json: {},
-  }
-  // Temporarily inject into timeline for display
-  if (!timeline.value.messages) timeline.value.messages = []
-  timeline.value.messages.push(optimisticUserMsg)
-  // Scroll to bottom after optimistic user message appears
-  await nextTick()
-  if (timelineScrollRef.value) {
-    timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-  }
-
   try {
-    // Backend streaming endpoint handles user message ingest + assistant stream
-    const response = await fetch(`${apiBase}/api/v1/connectors/hermes/chat/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        external_session_id: externalSessionId,
-        title,
-        platform: 'hermes',
-        user_message: trimmed,
-      }),
-      signal: abortCtrl.signal,
-    })
-
-    if (!response.ok) {
-      throw new Error(`Stream request failed: ${response.status}`)
+    // If there is an active dispatch task awaiting input or paused, resume it
+    if (dispatchTaskId.value && dispatchIsResumable.value) {
+      await resumeDispatchTask(trimmed)
+    } else if (!dispatchTaskId.value) {
+      // No active dispatch task — create a new one
+      clearActiveTask()
+      if (!wsConnected.value) wsConnect()
+      await createDispatchTask({
+        aiPlatform: 'hermes',
+        initialPrompt: trimmed,
+        model: selectedModel.value || '',
+        skills: [...selectedSkills.value],
+        mcpServers: [...selectedMcpServers.value],
+      })
     }
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ') || line.trim() === 'data: [DONE]') continue
-        const data = line.slice(6)
-        try {
-          const event = JSON.parse(data)
-          if (event.type === 'session') {
-            // Backend created/linked the session
-            if (event.session_id && !selectedSessionId.value) {
-              selectedSessionId.value = event.session_id
-            }
-          } else if (event.type === 'content' && event.content) {
-            streamingContent.value += event.content
-            // Auto-scroll during streaming
-            await nextTick()
-            if (timelineScrollRef.value) {
-              timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-            }
-          } else if (event.type === 'tool_call') {
-            streamingContent.value += `\n🔧 _Calling: **${event.function_name || 'tool'}**_\n`
-            await nextTick()
-            if (timelineScrollRef.value) {
-              timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-            }
-          } else if (event.type === 'error') {
-            errorMessage.value = `AI Error: ${event.detail || 'Unknown'}`
-          } else if (event.type === 'done') {
-            // Stream finished, backend already ingested assistant message.
-            // Do NOT remove optimistic user msg here — loadSessionData will
-            // replace the entire timeline with real backend data atomically,
-            // avoiding the flicker of user msg disappearing then reappearing.
-            await loadSessions()
-            await loadSessionData()
-            // Auto-scroll after data refresh
-            await nextTick()
-            if (timelineScrollRef.value) {
-              timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-            }
-          }
-        } catch {
-          // Ignore malformed JSON
-        }
-      }
+    // Auto-scroll to bottom as content streams in via WebSocket
+    await nextTick()
+    if (timelineScrollRef.value) {
+      timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
     }
   } catch (error) {
     if (error.name !== 'AbortError') {
       errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
     }
-    // Remove optimistic user message on error (no loadSessionData replacement)
-    const idx = timeline.value.messages.findIndex(m => m.id === optimisticUserMsg.id)
-    if (idx !== -1) timeline.value.messages.splice(idx, 1)
   } finally {
     sending.value = false
-    isStreaming.value = false
-    streamAbortController.value = null
-    streamingContent.value = ''
-    // Final scroll to bottom when stream ends
-    await nextTick()
-    if (timelineScrollRef.value) {
-      timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-    }
   }
 }
 
@@ -1390,7 +1284,16 @@ watch(activePage, async (page) => {
   }
 })
 
-onMounted(refreshData)
+onMounted(() => {
+  refreshData()
+  // Initialize WebSocket connection for dispatch orchestration (ADR-0004)
+  wsConnect()
+})
+
+// Cleanup active dispatch task on unmount
+onUnmounted(() => {
+  clearActiveTask()
+})
 </script>
 
 <template>
@@ -1427,6 +1330,10 @@ onMounted(refreshData)
           <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'system-config' }" @click="activePage = 'system-config'">
             <span class="top-nav-btn-icon" aria-hidden="true">⚙️</span>
             <span class="top-nav-btn-label">系统配置</span>
+          </button>
+          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'dispatch-history' }" @click="switchToDispatchHistory">
+            <span class="top-nav-btn-icon" aria-hidden="true">📋</span>
+            <span class="top-nav-btn-label">调度历史</span>
           </button>
         </nav>
       </header>
@@ -1487,7 +1394,19 @@ onMounted(refreshData)
         </article>
 
         <article class="panel timeline-panel">
-          <h2>对话时间线</h2>
+          <div class="timeline-panel-header">
+            <h2>对话时间线</h2>
+            <!-- Dispatch task status indicator (ADR-0004) -->
+            <div v-if="dispatchActiveTask" class="dispatch-status-bar" :class="dispatchStatusClassMap[dispatchActiveTask.status] || ''">
+              <span class="dispatch-status-label">{{ dispatchStatusLabelMap[dispatchActiveTask.status] || dispatchActiveTask.status }}</span>
+              <span class="dispatch-task-id">{{ dispatchActiveTask.id }}</span>
+              <div class="dispatch-actions">
+                <button v-if="dispatchIsCancellable" type="button" class="dispatch-action-btn dispatch-cancel-btn" @click="cancelDispatchTask">取消任务</button>
+                <button v-if="dispatchIsResumable" type="button" class="dispatch-action-btn dispatch-resume-btn" @click="clearActiveTask">关闭任务</button>
+                <button v-if="dispatchActiveTask.status === 'completed' || dispatchActiveTask.status === 'failed' || dispatchActiveTask.status === 'cancelled'" type="button" class="dispatch-action-btn dispatch-close-btn" @click="clearActiveTask">清除</button>
+              </div>
+            </div>
+          </div>
 
           <div class="timeline-scroll" ref="timelineScrollRef">
             <div v-if="displayMessages.length === 0" class="muted">暂无消息</div>
@@ -1510,15 +1429,15 @@ onMounted(refreshData)
             <textarea
               v-model="composerText"
               class="composer-input"
-              :disabled="sending || isStreaming"
-              placeholder="输入消息，直接与 Hermes 对话"
+              :disabled="sending || dispatchIsRunning"
+              :placeholder="dispatchAwaitingInput ? 'AI 正在等待你的回复...' : '输入消息，直接与 AI 对话'"
               @keydown="handleComposerKeydown"
             ></textarea>
-            <button v-if="isStreaming" class="composer-send composer-cancel" type="button" @click="streamAbortController?.abort()">
-              取消
+            <button v-if="dispatchIsCancellable" class="composer-send composer-cancel" type="button" @click="cancelDispatchTask">
+              取消任务
             </button>
-            <button v-else class="composer-send" type="submit" :disabled="sending || !composerText.trim()">
-              {{ sending ? '发送中...' : '发送' }}
+            <button v-else class="composer-send" type="submit" :disabled="sending || !composerText.trim() || dispatchIsRunning">
+              {{ sending || dispatchIsRunning ? '处理中...' : '发送' }}
             </button>
           </form>
         </article>
@@ -1666,7 +1585,7 @@ onMounted(refreshData)
         </article>
       </section>
 
-      <section v-else class="main-grid config-grid">
+      <section v-else-if="activePage === 'system-config'" class="main-grid config-grid">
         <article class="panel state-panel config-panel config-panel-system">
           <div class="config-panel-head">
             <h2>系统配置</h2>
@@ -1708,6 +1627,83 @@ onMounted(refreshData)
                   </button>
                 </div>
               </aside>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section v-else-if="activePage === 'dispatch-history'" class="main-grid dispatch-history-grid">
+        <article class="panel dispatch-history-panel">
+          <div class="dispatch-history-header">
+            <h2>调度任务历史</h2>
+            <div class="dispatch-history-controls">
+              <select v-model="dispatchHistoryStatusFilter" class="dispatch-filter-select" @change="refreshDispatchHistory">
+                <option value="">全部状态</option>
+                <option value="completed">已完成</option>
+                <option value="failed">失败</option>
+                <option value="cancelled">已取消</option>
+                <option value="running">运行中</option>
+                <option value="awaiting_input">等待输入</option>
+                <option value="paused">已暂停</option>
+              </select>
+              <button type="button" class="dispatch-refresh-btn" @click="refreshDispatchHistory" :disabled="dispatchHistoryLoading">刷新</button>
+            </div>
+          </div>
+
+          <!-- Stats -->
+          <div class="dispatch-stats-bar">
+            <span class="dispatch-stat">总计: {{ dispatchStats.total }}</span>
+            <span class="dispatch-stat dispatch-stat-success">完成: {{ dispatchStats.completed }}</span>
+            <span class="dispatch-stat dispatch-stat-error">失败: {{ dispatchStats.failed }}</span>
+            <span class="dispatch-stat dispatch-stat-warn">运行: {{ dispatchStats.running + dispatchStats.queued }}</span>
+          </div>
+
+          <!-- Task list -->
+          <div v-if="dispatchHistoryLoading" class="dispatch-loading">加载中...</div>
+          <div v-else-if="dispatchHistoryError" class="dispatch-error">{{ dispatchHistoryError }}</div>
+          <div v-else-if="filteredDispatchTasks.length === 0" class="dispatch-empty">暂无调度任务</div>
+          <ul v-else class="dispatch-task-list">
+            <li v-for="task in filteredDispatchTasks" :key="task.id" class="dispatch-task-item" @click="viewDispatchTaskDetail(task)">
+              <div class="dispatch-task-row">
+                <span class="dispatch-task-platform">{{ task.ai_platform }}</span>
+                <span class="dispatch-task-status" :class="'dispatch-status-' + task.status">{{ dispatchStatusLabelMap[task.status] || task.status }}</span>
+              </div>
+              <div class="dispatch-task-prompt">{{ (task.initial_prompt || '').slice(0, 80) }}{{ (task.initial_prompt || '').length > 80 ? '...' : '' }}</div>
+              <div class="dispatch-task-meta">
+                <span>{{ formatTime(task.created_at) }}</span>
+                <span v-if="task.error_message" class="dispatch-task-error-hint">错误</span>
+              </div>
+            </li>
+          </ul>
+
+          <!-- Task detail modal -->
+          <div v-if="dispatchDetailTask" class="dispatch-detail-overlay" @click.self="dispatchDetailTask = null">
+            <div class="dispatch-detail-panel panel">
+              <div class="dispatch-detail-header">
+                <h3>调度任务详情</h3>
+                <button type="button" class="picker-close-btn" @click="dispatchDetailTask = null" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
+              </div>
+              <div class="dispatch-detail-body">
+                <div class="dispatch-detail-row"><strong>ID:</strong> {{ dispatchDetailTask.id }}</div>
+                <div class="dispatch-detail-row"><strong>平台:</strong> {{ dispatchDetailTask.ai_platform }}</div>
+                <div class="dispatch-detail-row"><strong>状态:</strong> <span :class="'dispatch-status-' + dispatchDetailTask.status">{{ dispatchStatusLabelMap[dispatchDetailTask.status] || dispatchDetailTask.status }}</span></div>
+                <div class="dispatch-detail-row"><strong>创建:</strong> {{ formatTime(dispatchDetailTask.created_at) }}</div>
+                <div v-if="dispatchDetailTask.error_message" class="dispatch-detail-row dispatch-detail-error"><strong>错误:</strong> {{ dispatchDetailTask.error_message }}</div>
+                <div class="dispatch-detail-row"><strong>初始提示:</strong></div>
+                <pre class="dispatch-detail-pre">{{ dispatchDetailTask.initial_prompt }}</pre>
+                <div v-if="dispatchDetailEvents.length > 0" class="dispatch-detail-events">
+                  <h4>事件流 ({{ dispatchDetailEvents.length }})</h4>
+                  <div v-for="(evt, idx) in dispatchDetailEvents" :key="idx" class="dispatch-event-item">
+                    <span class="dispatch-event-type">{{ evt.event_type }}</span>
+                    <span class="dispatch-event-time">{{ formatTime(evt.created_at) }}</span>
+                    <pre v-if="evt.payload" class="dispatch-event-payload">{{ JSON.stringify(evt.payload, null, 2).slice(0, 300) }}</pre>
+                  </div>
+                </div>
+              </div>
+              <div class="dispatch-detail-actions">
+                <button v-if="dispatchDetailTask.status === 'awaiting_input' || dispatchDetailTask.status === 'paused'" type="button" class="picker-btn" @click="resumeFromHistory(dispatchDetailTask)">恢复任务</button>
+                <button v-if="['queued','running','awaiting_input'].includes(dispatchDetailTask.status)" type="button" class="picker-btn picker-btn-danger" @click="cancelFromHistory(dispatchDetailTask)">取消任务</button>
+              </div>
             </div>
           </div>
         </article>

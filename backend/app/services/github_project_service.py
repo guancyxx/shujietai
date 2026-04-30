@@ -155,6 +155,23 @@ class GitHubProjectService:
         raise ValueError("invalid_github_repository_url")
 
     def create_repository(self, payload: GitHubRepoCreateRequest) -> GitHubRepoOption:
+        # Try gh CLI first, fallback to HTTP API
+        token = os.getenv("GITHUB_TOKEN", "").strip()
+
+        # Try gh CLI if available
+        if shutil.which("gh"):
+            try:
+                return self._create_repository_with_gh(payload)
+            except RuntimeError:
+                pass
+
+        # Fallback to HTTP API if token is available
+        if token:
+            return self._create_repository_with_http(payload, token)
+
+        raise RuntimeError("gh_cli_unavailable")
+
+    def _create_repository_with_gh(self, payload: GitHubRepoCreateRequest) -> GitHubRepoOption:
         command = [
             "gh",
             "api",
@@ -169,6 +186,36 @@ class GitHubProjectService:
         output = self._run_command(command)
 
         row = json.loads(output)
+        name = str(row.get("name") or "").strip()
+        full_name = str(row.get("full_name") or "").strip()
+        url = str(row.get("html_url") or "").strip()
+        description = str(row.get("description") or "").strip()
+        if not name or not full_name or not url:
+            raise RuntimeError("gh_repo_create_failed")
+        return GitHubRepoOption(name=name, full_name=full_name, url=url, description=description)
+
+    def _create_repository_with_http(self, payload: GitHubRepoCreateRequest, token: str) -> GitHubRepoOption:
+        import httpx
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = httpx.post(
+            "https://api.github.com/user/repos",
+            json={
+                "name": payload.name.strip(),
+                "description": payload.description.strip(),
+                "private": payload.private,
+            },
+            headers=headers,
+            timeout=30,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"github_api_failed: {response.text}")
+
+        row = response.json()
         name = str(row.get("name") or "").strip()
         full_name = str(row.get("full_name") or "").strip()
         url = str(row.get("html_url") or "").strip()

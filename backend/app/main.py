@@ -40,13 +40,16 @@ from app.services.cockpit_service import get_cockpit_by_session
 from app.services.ingest_retry_service import DeadLetterQuery, IngestRetryService
 from app.services.retry_worker import RetryWorkerConfig, run_retry_loop
 from app.services.store_factory import build_store
-from app.connectors.registry import build_default_registry
+from app.services.dispatch_service import DispatchService
+from app.services.dispatch_worker import DispatchWorkerPool
+from app.services.ws_manager import WsManager
+from app.connectors.registry import register_defaults
 
 store = build_store()
 github_project_service = GitHubProjectService()
 config_session_factory = store.session_factory if hasattr(store, "session_factory") else None
 system_config_service = SystemConfigService(config_session_factory)
-connector_registry = build_default_registry()
+register_defaults()
 retry_service = None
 retry_counters = {
     "ingest_success_total": 0,
@@ -55,6 +58,10 @@ retry_counters = {
 }
 if hasattr(store, "session_factory"):
     retry_service = IngestRetryService(store.session_factory)
+
+ws_manager = WsManager()
+dispatch_service = DispatchService(store.session_factory) if hasattr(store, "session_factory") else None
+worker_pool = DispatchWorkerPool(dispatch_service, ws_manager) if dispatch_service else None
 
 
 def _build_retry_worker_config() -> RetryWorkerConfig:
@@ -81,6 +88,20 @@ def _build_retry_tick_hook(counters: dict[str, int]):
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
+    # Crash recovery: mark any orphaned 'running' tasks as 'paused'
+    if dispatch_service is not None:
+        recovered = dispatch_service.recover_running_tasks()
+        if recovered > 0:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Recovered %d orphaned dispatch tasks (set to paused)", recovered,
+            )
+
+    # Attach singletons to app.state for route access
+    app_instance.state.dispatch_service = dispatch_service
+    app_instance.state.worker_pool = worker_pool
+    app_instance.state.ws_manager = ws_manager
+
     retry_task = None
     if retry_service is not None:
         retry_enabled = os.getenv("INGEST_RETRY_ENABLED", "true").lower() == "true"
@@ -99,6 +120,10 @@ async def lifespan(app_instance: FastAPI):
     try:
         yield
     finally:
+        # Cancel dispatch worker pool tasks
+        if worker_pool is not None:
+            worker_pool.cancel_all()
+
         existing_retry_task = getattr(app_instance.state, "retry_task", None)
         if existing_retry_task is not None:
             existing_retry_task.cancel()
@@ -119,6 +144,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Dispatch orchestration routes (ADR-0004)
+from app.api.routes_dispatch import router as dispatch_router
+from app.api.routes_ws import router as ws_router
+app.include_router(dispatch_router)
+app.include_router(ws_router)
 
 
 @app.middleware("http")
