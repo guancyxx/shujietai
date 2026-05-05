@@ -93,6 +93,26 @@ Hermes-specific:
 - Model / Skills / MCP are configured in the state panel only, then persisted via runtime preferences API.
 - This enforces "configure before chat" while keeping conversation creation focused on conversation data.
 
+## Development Workflow (PR-First)
+
+To keep `main` stable and reviewable, all coding changes must follow PR-first workflow:
+
+1. Never develop directly on `main`.
+2. Create a short-lived feature/fix branch from latest `main`.
+3. Finish coding + verification on that branch.
+4. Push branch and create a Pull Request.
+5. Merge only through PR review/checks. No direct local merge into `main`.
+
+Recommended command flow:
+
+git checkout main && git pull origin main
+git checkout -b feat/<short-description>
+# code + verify
+git add <files>
+git commit -m "type(scope): summary"
+git push -u origin HEAD
+gh pr create --title "type(scope): summary" --body "<PR description>"
+
 ## Verification Commands
 
 Stack status:
