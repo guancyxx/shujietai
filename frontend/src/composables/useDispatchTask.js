@@ -98,19 +98,37 @@ const isTaskCancellable = computed(() => {
 function handleTaskEvent(data) {
   if (data.task_id !== activeTaskId.value) return
 
-  // Append to local event log
-  taskEvents.value.push({
+  const incomingEvent = {
     id: data.event_id || `evt_${Date.now()}`,
     event_type: data.event_type,
+    event_name: data.event_name || data.event_type || '',
+    status: data.status || null,
+    seq: Number.isFinite(data.seq) ? data.seq : Number.MAX_SAFE_INTEGER,
+    run_id: data.run_id || null,
+    tool_call_id: data.tool_call_id || null,
     payload: data.payload,
     created_at: data.created_at || new Date().toISOString(),
+  }
+
+  taskEvents.value.push(incomingEvent)
+  taskEvents.value.sort((a, b) => {
+    const seqA = Number.isFinite(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
+    const seqB = Number.isFinite(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
+    if (seqA !== seqB) return seqA - seqB
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   })
 }
 
 function handleTaskStatus(data) {
   if (data.task_id !== activeTaskId.value) return
   if (activeTask.value) {
-    activeTask.value = { ...activeTask.value, status: data.status, updated_at: data.updated_at || new Date().toISOString() }
+    const payloadStatus = data.payload?.status
+    const nextStatus = data.status || payloadStatus || activeTask.value.status
+    activeTask.value = {
+      ...activeTask.value,
+      status: nextStatus,
+      updated_at: data.created_at || data.updated_at || new Date().toISOString(),
+    }
   }
 }
 
@@ -181,10 +199,21 @@ async function createDispatchTask({ aiPlatform = 'hermes', initialPrompt, system
         taskEvents.value.push({
           id: evt.id,
           event_type: evt.event_type,
+          event_name: evt.event_name || evt.event_type || '',
+          status: evt.status || null,
+          seq: Number.isFinite(evt.seq) ? evt.seq : Number.MAX_SAFE_INTEGER,
+          run_id: evt.run_id || null,
+          tool_call_id: evt.tool_call_id || null,
           payload: evt.payload,
           created_at: evt.created_at || new Date().toISOString(),
         })
       }
+      taskEvents.value.sort((a, b) => {
+        const seqA = Number.isFinite(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
+        const seqB = Number.isFinite(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
+        if (seqA !== seqB) return seqA - seqB
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      })
     } catch {
       // If fetch fails, rely on WebSocket streaming only
     }
@@ -293,9 +322,12 @@ function clearActiveTask() {
 // Build messages from dispatch events for timeline display
 const dispatchMessages = computed(() => {
   const messages = []
+  const toolStates = new Map()
+
   for (const evt of taskEvents.value) {
+    const payload = evt.payload || {}
+
     if (evt.event_type === 'content_delta') {
-      const payload = evt.payload || {}
       const currentRole = payload.role || 'assistant'
       // Group consecutive content_deltas by role
       const lastMsg = messages[messages.length - 1]
@@ -314,18 +346,46 @@ const dispatchMessages = computed(() => {
         messages.push(message)
       }
     } else if (evt.event_type === 'tool_call') {
-      const payload = evt.payload || {}
-      messages.push({
-        id: evt.id,
-        role: 'tool',
-        content: `🔧 Calling: **${payload.function_name || payload.tool_name || 'tool'}**`,
-        content_type: 'text/markdown',
-        created_at: evt.created_at,
-        meta_json: { tool_call: true },
-        _groupKey: 'tool_call',
-      })
+      const toolCallId = evt.tool_call_id || payload.tool_call_id || payload.id || `tool_${evt.seq || evt.id}`
+      const functionName = payload.function_name || payload.tool_name || 'tool'
+      const functionArgsDelta = payload.function_args_delta || ''
+      const existingTool = toolStates.get(toolCallId)
+
+      if (existingTool) {
+        existingTool.args += functionArgsDelta
+        existingTool.updatedAt = evt.created_at
+      } else {
+        const toolMessage = {
+          id: evt.id,
+          role: 'tool',
+          content: `🔧 Calling: **${functionName}**`,
+          content_type: 'text/markdown',
+          created_at: evt.created_at,
+          meta_json: {
+            tool_call: true,
+            tool_call_id: toolCallId,
+            function_name: functionName,
+            function_args: functionArgsDelta,
+          },
+          _groupKey: 'tool_call',
+        }
+        messages.push(toolMessage)
+        toolStates.set(toolCallId, {
+          message: toolMessage,
+          args: functionArgsDelta,
+          updatedAt: evt.created_at,
+        })
+      }
+
+      const toolState = toolStates.get(toolCallId)
+      if (toolState) {
+        toolState.message.meta_json = {
+          ...(toolState.message.meta_json || {}),
+          function_args: toolState.args,
+          updated_at: toolState.updatedAt,
+        }
+      }
     } else if (evt.event_type === 'error') {
-      const payload = evt.payload || {}
       messages.push({
         id: evt.id,
         role: 'system',
@@ -336,6 +396,7 @@ const dispatchMessages = computed(() => {
       })
     }
   }
+
   return messages
 })
 

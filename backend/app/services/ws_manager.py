@@ -48,15 +48,44 @@ class WsManager:
             for task_id in to_remove:
                 del self._subscriptions[task_id]
 
-    async def broadcast(self, task_id: str, event_type: str, payload: dict[str, Any]) -> None:
+    async def broadcast(
+        self,
+        task_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        event_id: str | None = None,
+        event_name: str | None = None,
+        status: str | None = None,
+        seq: int | None = None,
+        run_id: str | None = None,
+        tool_call_id: str | None = None,
+        created_at: str | None = None,
+    ) -> None:
         async with self._lock:
             subscribers = list(self._subscriptions.get(task_id, set()))
 
-        message = json_module.dumps({
+        message_payload: dict[str, Any] = {
             "event_type": event_type,
             "task_id": task_id,
             "payload": payload,
-        })
+        }
+        if event_id is not None:
+            message_payload["event_id"] = event_id
+        if event_name is not None:
+            message_payload["event_name"] = event_name
+        if status is not None:
+            message_payload["status"] = status
+        if seq is not None:
+            message_payload["seq"] = seq
+        if run_id is not None:
+            message_payload["run_id"] = run_id
+        if tool_call_id is not None:
+            message_payload["tool_call_id"] = tool_call_id
+        if created_at is not None:
+            message_payload["created_at"] = created_at
+
+        message = json_module.dumps(message_payload)
 
         for ws in subscribers:
             try:

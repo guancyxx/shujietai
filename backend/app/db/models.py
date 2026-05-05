@@ -119,16 +119,26 @@ class DispatchTaskEntity(Base):
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     initial_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_run_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    last_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class DispatchEventEntity(Base):
     __tablename__ = "dispatch_events"
+    __table_args__ = (UniqueConstraint("task_id", "seq", name="uq_dispatch_events_task_seq"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     task_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tool_call_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
