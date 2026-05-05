@@ -250,6 +250,55 @@ const roleLabelMap = {
   tool: '工具',
 }
 
+const dispatchEventLabelMap = {
+  content_delta: 'AI 正在返回内容',
+  tool_call: 'AI 正在调用工具',
+  await_input: 'AI 等待你补充信息',
+  completed: '任务已完成',
+  error: '任务执行异常',
+  cancelled: '任务已取消',
+}
+
+const latestDispatchEvent = computed(() => {
+  if (!dispatchTaskEvents.value.length) {
+    return null
+  }
+  return dispatchTaskEvents.value[dispatchTaskEvents.value.length - 1]
+})
+
+const conversationLatestStatus = computed(() => {
+  const evt = latestDispatchEvent.value
+  if (evt) {
+    return {
+      text: dispatchEventLabelMap[evt.event_type] || evt.event_type,
+      time: evt.created_at ? formatSessionTime(evt.created_at) : '-',
+      tone: evt.event_type === 'error' ? 'error' : (evt.event_type === 'completed' ? 'done' : 'active'),
+    }
+  }
+
+  if (dispatchTaskId.value && dispatchActiveTask.value) {
+    return {
+      text: `当前任务：${dispatchStatusLabelMap[dispatchActiveTask.value.status] || dispatchActiveTask.value.status}`,
+      time: dispatchActiveTask.value.updated_at ? formatSessionTime(dispatchActiveTask.value.updated_at) : '-',
+      tone: ['failed', 'cancelled', 'aborted'].includes(dispatchActiveTask.value.status) ? 'error' : (dispatchActiveTask.value.status === 'completed' ? 'done' : 'active'),
+    }
+  }
+
+  if (sending.value || creatingConversation.value || dispatchLoading.value) {
+    return {
+      text: '消息已发送，正在发起请求...',
+      time: formatSessionTime(new Date().toISOString()),
+      tone: 'active',
+    }
+  }
+
+  return {
+    text: '暂无进行中的请求',
+    time: '-',
+    tone: 'idle',
+  }
+})
+
 // Render markdown content safely with DOMPurify
 function renderMarkdown(text) {
   if (!text) return ''
@@ -831,9 +880,10 @@ async function startConversationFromTask(task) {
   startingConversationFromTask.value = true
   errorMessage.value = ''
   try {
-    const systemPrompt = buildTaskSystemPrompt(task)
+    const projectContext = resolveTaskProjectContext(task)
+    const systemPrompt = buildTaskSystemPrompt(task, projectContext)
     const platform = task.ai_platform || 'hermes'
-    const promptMessage = '请根据上述任务上下文开始工作'
+    const promptMessage = buildTaskStartMessage(task, projectContext)
 
     // Use dispatch orchestration layer instead of direct SSE (ADR-0004)
     const dispatchTask = await createDispatchTask({
@@ -897,21 +947,64 @@ async function startConversationFromTask(task) {
   }
 }
 
-function buildTaskSystemPrompt(task) {
+function buildTaskSystemPrompt(task, projectContext = null) {
   const lines = [`[Task Context]`]
   lines.push(`Task: ${task.name}`)
   if (task.description) lines.push(`Description: ${task.description}`)
   lines.push(`Status: ${taskBoardStatusLabelMap[task.status] || task.status}`)
   lines.push(`AI Platform: ${task.ai_platform || 'hermes'}`)
-  if (task.project_name) {
+
+  const context = projectContext || resolveTaskProjectContext(task)
+  if (context?.name || context?.repositoryName || context?.repositoryUrl) {
     lines.push(`\n[Project]`)
-    lines.push(`Project: ${task.project_name}`)
-    if (task.project_repository_name) lines.push(`Repository: ${task.project_repository_name}`)
-    if (task.project_repository_url) lines.push(`Repository URL: ${task.project_repository_url}`)
+    if (context.name) lines.push(`Project: ${context.name}`)
+    if (context.repositoryName) lines.push(`Repository: ${context.repositoryName}`)
+    if (context.repositoryUrl) lines.push(`Repository URL: ${context.repositoryUrl}`)
   }
+
   if (task.upstream_task_name) lines.push(`\n[Upstream Dependency] ${task.upstream_task_name}`)
   if (task.parent_task_name) lines.push(`[Parent Task] ${task.parent_task_name}`)
   return lines.join('\n')
+}
+
+function buildTaskStartMessage(task, projectContext = null) {
+  const context = projectContext || resolveTaskProjectContext(task)
+  const lines = ['请根据任务上下文开始工作。']
+  if (context?.name) {
+    lines.push(`关联项目: ${context.name}`)
+  }
+  if (context?.repositoryName) {
+    lines.push(`仓库: ${context.repositoryName}`)
+  }
+  if (context?.repositoryUrl) {
+    lines.push(`仓库地址: ${context.repositoryUrl}`)
+  }
+  lines.push(`任务: ${task.name}`)
+  return lines.join('\n')
+}
+
+function resolveTaskProjectContext(task) {
+  const projectById = task.project_id
+    ? projects.value.find((item) => item.id === task.project_id)
+    : null
+  const repositoryUrl = task.project_repository_url || projectById?.repository_url || ''
+  const repositoryName = task.project_repository_name
+    || projectById?.repository_name
+    || inferRepositoryNameFromUrl(repositoryUrl)
+    || ''
+
+  return {
+    name: task.project_name || projectById?.name || '',
+    repositoryName,
+    repositoryUrl,
+  }
+}
+
+function inferRepositoryNameFromUrl(url) {
+  if (!url) return ''
+  const trimmed = String(url).trim().replace(/\/+$/, '')
+  const parts = trimmed.split('/')
+  return parts.length > 0 ? (parts[parts.length - 1] || '') : ''
 }
 
 function openTaskBoardCreateModal() {
@@ -1469,6 +1562,11 @@ onUnmounted(() => {
           </div>
 
           <form class="chat-composer" @submit.prevent="sendMessageToHermes">
+            <div class="conversation-latest-status" :class="`status-${conversationLatestStatus.tone}`">
+              <span class="latest-status-label">会话状态</span>
+              <span class="latest-status-text">{{ conversationLatestStatus.text }}</span>
+              <span class="latest-status-time">{{ conversationLatestStatus.time }}</span>
+            </div>
             <textarea
               v-model="composerText"
               class="composer-input"
@@ -1487,7 +1585,7 @@ onUnmounted(() => {
 
         <article class="panel state-panel placeholder-state-panel">
           <h2>会话状态</h2>
-          <div class="muted">暂时为空</div>
+          <div class="muted">状态已移动到输入框上方，仅显示最新状态。</div>
         </article>
       </section>
 

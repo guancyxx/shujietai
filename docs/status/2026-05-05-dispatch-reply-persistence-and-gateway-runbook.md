@@ -121,6 +121,18 @@ This is preferred over silent empty completion.
   - `clearActiveTask()` is now called when deleting the currently selected session and when clearing all sessions.
   - Streaming UI state is explicitly reset (`isStreaming=false`, `streamingContent=''`) together with timeline data reset.
   - This prevents stale dispatch/event timeline content from remaining visible after conversation cleanup.
+- Added real-time conversation progress panel in chat view (`frontend/src/App.vue` + `frontend/src/style.css`):
+  - Replaced placeholder "会话状态" with a 4-step live progress tracker: "消息已发给 AI" → "任务进入调度" → "AI 处理中" → "返回结果".
+  - Step states now reactively map from dispatch lifecycle (`queued/running/awaiting_input/completed/failed/cancelled`).
+  - Added latest-event hint text sourced from dispatch event stream for immediate operator visibility.
+- Refined conversation status UX:
+  - Moved status display above the composer input and changed it to single latest status only.
+  - Kept the right status panel as placeholder text to avoid duplicate state surfaces.
+- Improved task-based session start context payload:
+  - On "start conversation from task", frontend now resolves project + repository context from both task snapshot and project registry fallback.
+  - Initial prompt now includes project name and repository URL explicitly (plus repository name when available), reducing agent drift from intended codebase.
+  - `system_prompt` and `initial_prompt` now share consistent task+project context construction.
+- Increased chat composer textarea size for better multi-line input (`min-height: 96px`, `max-height: 220px`, vertical resize enabled).
 
 - File: `frontend/src/App.vue`
 - Added `dispatchError` inline alert rendering in timeline header area.
