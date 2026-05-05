@@ -630,7 +630,7 @@ def create_github_repository(payload: GitHubRepoCreateRequest) -> GitHubRepoOpti
         return github_project_service.create_repository(payload, token_override=token)
     except RuntimeError as exc:
         detail = str(exc)
-        if detail == "gh_cli_unavailable":
+        if detail in {"gh_cli_unavailable", "github_repo_create_unavailable"}:
             raise HTTPException(status_code=503, detail=detail) from exc
         raise HTTPException(status_code=502, detail=detail) from exc
 

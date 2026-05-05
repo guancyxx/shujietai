@@ -648,6 +648,9 @@ function mapApiError(status, detail) {
   if (status === 503 && normalized.includes('gh_cli_unavailable')) {
     return 'GitHub service is temporarily unavailable (gh CLI missing in backend). Please contact admin or retry later.'
   }
+  if (status === 503 && normalized.includes('github_repo_create_unavailable')) {
+    return 'GitHub repo creation is unavailable: both gh CLI and token fallback are not ready. Please configure token or backend runtime.'
+  }
   if (status === 503 && normalized.includes('github_api_failed')) {
     return 'GitHub API is temporarily unavailable. Please retry in a moment.'
   }

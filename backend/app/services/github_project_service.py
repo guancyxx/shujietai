@@ -155,21 +155,21 @@ class GitHubProjectService:
         raise ValueError("invalid_github_repository_url")
 
     def create_repository(self, payload: GitHubRepoCreateRequest, token_override: str = "") -> GitHubRepoOption:
-        # Try gh CLI first, fallback to HTTP API
+        # Try gh CLI first, fallback to HTTP API.
         token = token_override.strip() or os.getenv("GITHUB_TOKEN", "").strip()
 
-        # Try gh CLI if available
         if shutil.which("gh"):
             try:
                 return self._create_repository_with_gh(payload)
-            except RuntimeError:
-                pass
+            except RuntimeError as exc:
+                if token:
+                    return self._create_repository_with_http(payload, token)
+                raise RuntimeError(str(exc)) from exc
 
-        # Fallback to HTTP API if token is available
         if token:
             return self._create_repository_with_http(payload, token)
 
-        raise RuntimeError("gh_cli_unavailable")
+        raise RuntimeError("github_repo_create_unavailable")
 
     def _create_repository_with_gh(self, payload: GitHubRepoCreateRequest) -> GitHubRepoOption:
         command = [
