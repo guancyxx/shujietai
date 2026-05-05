@@ -344,17 +344,26 @@ body {
   align-content: start;
   gap: 10px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(111, 186, 255, 0.55) transparent;
+  scrollbar-color: transparent transparent;
+}
+
+.conversation-only-list:hover {
+  scrollbar-color: rgba(111, 186, 255, 0.4) transparent;
 }
 
 .conversation-only-list::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 .conversation-only-list::-webkit-scrollbar-thumb {
-  background: rgba(111, 186, 255, 0.55);
+  background: transparent;
   border-radius: 999px;
+  transition: background 200ms ease;
+}
+
+.conversation-only-list:hover::-webkit-scrollbar-thumb {
+  background: rgba(111, 186, 255, 0.4);
 }
 
 .conversation-only-list::-webkit-scrollbar-track {
@@ -1516,11 +1525,15 @@ h2 {
   overflow-y: auto;
   overflow-x: hidden;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 12px;
   align-content: start;
   padding: 4px 4px 6px;
   scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.task-board-list:hover {
   scrollbar-color: rgba(111, 186, 255, 0.3) transparent;
 }
 
@@ -1530,8 +1543,13 @@ h2 {
 }
 
 .task-board-list::-webkit-scrollbar-thumb {
-  background: rgba(111, 186, 255, 0.3);
+  background: transparent;
   border-radius: 10px;
+  transition: background 200ms ease;
+}
+
+.task-board-list:hover::-webkit-scrollbar-thumb {
+  background: rgba(111, 186, 255, 0.3);
 }
 
 .task-board-list::-webkit-scrollbar-thumb:hover {
@@ -1819,6 +1837,19 @@ h2 {
 
   .chat-grid {
     grid-template-columns: minmax(240px, 30%) minmax(0, 1fr) minmax(200px, 24%);
+  }
+
+  /* Single-column pages must stay single-column even when .main-grid switches to two columns */
+  .task-board-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dispatch-history-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .config-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
