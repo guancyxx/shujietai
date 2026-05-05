@@ -144,7 +144,9 @@ This is preferred over silent empty completion.
   - `message.user.delta`
   - `message.assistant.delta`
   - `message.assistant.full`
+  - `tool.call.started`
   - `tool.call.delta`
+  - `tool.call.completed`
   - `task.progress.finish`
   - `task.awaiting_input`
   - `task.completed`
@@ -156,6 +158,45 @@ This is preferred over silent empty completion.
   - `event_id`, `event_name`, `status`, `seq`, `run_id`, `tool_call_id`, `created_at`
 - Base fields remain unchanged:
   - `event_type`, `task_id`, `payload`
+
+### Integration payload examples (REST + WS)
+- REST (`GET /api/v1/dispatch/{task_id}/events`) item example:
+```json
+{
+  "id": "de_abc123",
+  "task_id": "dt_abc123",
+  "seq": 12,
+  "event_type": "tool_call",
+  "event_name": "tool.call.delta",
+  "status": "running",
+  "run_id": "dr_def456",
+  "tool_call_id": "call_1",
+  "payload": {
+    "tool_call_id": "call_1",
+    "function_name": "search_files",
+    "function_args_delta": "{\"pattern\":\"dispatch\"}"
+  },
+  "created_at": "2026-05-05T08:00:00Z"
+}
+```
+- WS message example:
+```json
+{
+  "event_type": "tool_call",
+  "task_id": "dt_abc123",
+  "event_id": "de_abc123",
+  "event_name": "tool.call.started",
+  "status": "running",
+  "seq": 11,
+  "run_id": "dr_def456",
+  "tool_call_id": "call_1",
+  "payload": {
+    "tool_call_id": "call_1",
+    "function_name": "search_files"
+  },
+  "created_at": "2026-05-05T07:59:59Z"
+}
+```
 
 ### Frontend aggregation updates
 - `frontend/src/composables/useDispatchTask.js` now:

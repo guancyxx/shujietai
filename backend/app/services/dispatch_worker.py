@@ -46,6 +46,7 @@ class TaskWorker:
         self._svc = dispatch_service
         self._ws = ws_manager
         self._cancelled = False
+        self._tool_calls_in_flight: dict[str, dict[str, Any]] = {}
 
     async def run(self) -> None:
         """Main entry point — called as an asyncio.Task."""
@@ -77,6 +78,7 @@ class TaskWorker:
                 event_name="task.cancelled",
                 status="cancelled",
             )
+            self._tool_calls_in_flight.clear()
             logger.info("Dispatch task %s cancelled", task_id)
 
         except Exception as exc:
@@ -90,6 +92,7 @@ class TaskWorker:
                 event_name="task.failed",
                 status="failed",
             )
+            self._tool_calls_in_flight.clear()
             logger.exception("Dispatch task %s failed: %s", task_id, error_msg)
 
     async def _emit_event(
@@ -201,21 +204,60 @@ class TaskWorker:
                 tool_call_id = _tool_call_id(chunk)
                 function_name = chunk.get("function_name", "")
                 function_args_delta = chunk.get("function_args_delta", "")
-                await self._emit_event(
-                    "tool_call",
-                    {
-                        "tool_call_id": tool_call_id,
+                current_tool = self._tool_calls_in_flight.get(tool_call_id)
+
+                if current_tool is None:
+                    current_tool = {
+                        "function_name": function_name,
+                        "function_args": "",
                         "index": chunk.get("index", 0),
                         "id": chunk.get("id", ""),
-                        "function_name": function_name,
-                        "function_args_delta": function_args_delta,
-                    },
-                    event_name="tool.call.delta",
-                    status=self._task.status,
-                    tool_call_id=tool_call_id,
-                )
+                    }
+                    self._tool_calls_in_flight[tool_call_id] = current_tool
+                    await self._emit_event(
+                        "tool_call",
+                        {
+                            "tool_call_id": tool_call_id,
+                            "index": current_tool["index"],
+                            "id": current_tool["id"],
+                            "function_name": function_name,
+                        },
+                        event_name="tool.call.started",
+                        status=self._task.status,
+                        tool_call_id=tool_call_id,
+                    )
+
+                if function_name:
+                    current_tool["function_name"] = function_name
+                if function_args_delta:
+                    current_tool["function_args"] += function_args_delta
+                    await self._emit_event(
+                        "tool_call",
+                        {
+                            "tool_call_id": tool_call_id,
+                            "function_name": current_tool["function_name"],
+                            "function_args_delta": function_args_delta,
+                        },
+                        event_name="tool.call.delta",
+                        status=self._task.status,
+                        tool_call_id=tool_call_id,
+                    )
 
             elif chunk_type == "finish":
+                for tool_call_id, tool_state in list(self._tool_calls_in_flight.items()):
+                    await self._emit_event(
+                        "tool_call",
+                        {
+                            "tool_call_id": tool_call_id,
+                            "function_name": tool_state.get("function_name", "tool"),
+                            "function_args": tool_state.get("function_args", ""),
+                        },
+                        event_name="tool.call.completed",
+                        status=self._task.status,
+                        tool_call_id=tool_call_id,
+                    )
+                self._tool_calls_in_flight.clear()
+
                 finish_reason = chunk.get("finish_reason", "")
                 usage = chunk.get("usage", {})
                 await self._emit_event(

@@ -354,6 +354,7 @@ const dispatchMessages = computed(() => {
       if (existingTool) {
         existingTool.args += functionArgsDelta
         existingTool.updatedAt = evt.created_at
+        existingTool.completed = existingTool.completed || evt.event_name === 'tool.call.completed'
       } else {
         const toolMessage = {
           id: evt.id,
@@ -366,6 +367,7 @@ const dispatchMessages = computed(() => {
             tool_call_id: toolCallId,
             function_name: functionName,
             function_args: functionArgsDelta,
+            completed: evt.event_name === 'tool.call.completed',
           },
           _groupKey: 'tool_call',
         }
@@ -374,16 +376,30 @@ const dispatchMessages = computed(() => {
           message: toolMessage,
           args: functionArgsDelta,
           updatedAt: evt.created_at,
+          completed: evt.event_name === 'tool.call.completed',
         })
       }
 
       const toolState = toolStates.get(toolCallId)
       if (toolState) {
+        if (evt.event_name === 'tool.call.completed') {
+          toolState.completed = true
+          toolState.updatedAt = evt.created_at
+          const finalArgs = payload.function_args || toolState.args
+          if (typeof finalArgs === 'string') {
+            toolState.args = finalArgs
+          }
+        }
+
         toolState.message.meta_json = {
           ...(toolState.message.meta_json || {}),
           function_args: toolState.args,
           updated_at: toolState.updatedAt,
+          completed: !!toolState.completed,
         }
+        toolState.message.content = toolState.completed
+          ? `✅ Tool completed: **${toolState.message.meta_json.function_name || functionName}**`
+          : `🔧 Calling: **${toolState.message.meta_json.function_name || functionName}**`
       }
     } else if (evt.event_type === 'error') {
       messages.push({
