@@ -48,13 +48,17 @@ Frontend ←─WebSocket──→ Dispatch Orchestrator ←─Connector──→
 **DispatchTask** — one per task card "start" action:
 - `id`, `task_board_item_id` (FK to task board), `status`, `ai_platform`
 - `external_session_id` (populated after AI session created)
+- `current_run_id`, `last_sequence`, `started_at`, `finished_at` (observability and run lifecycle)
 - `config` JSON (system_prompt, model, skills, etc.)
 - `initial_prompt` (user's first message)
 - `error_message`, `created_at`, `updated_at`
 
 **DispatchEvent** — append-only event log per task:
-- `id`, `task_id` (FK), `event_type`, `payload` JSON, `created_at`
-- event_types: `progress`, `content_delta`, `tool_call`, `await_input`, `completed`, `error`
+- `id`, `task_id` (FK), `seq`, `event_type`, `event_name`, `status`, `run_id`, `tool_call_id`, `payload` JSON, `created_at`
+- `event_type` keeps backward compatibility with older consumers
+- `event_name` provides stable semantic names for observability and frontend rendering
+- `seq` is strictly increasing per `task_id` and enables deterministic timeline rebuild
+- event_types: `status`, `progress`, `content_delta`, `content_full`, `tool_call`, `await_input`, `completed`, `error`, `cancelled`
 
 ### Task State Machine
 
@@ -93,14 +97,15 @@ Client → Server:
 - `{ action: "subscribe_task", task_id: "..." }`
 - `{ action: "unsubscribe_task", task_id: "..." }`
 
-Server → Client:
-- `{ type: "task_status", task_id, status }`
-- `{ type: "content_delta", task_id, content }`
-- `{ type: "tool_call", task_id, function_name, ... }`
-- `{ type: "await_input", task_id, prompt }`
-- `{ type: "task_completed", task_id, summary }`
-- `{ type: "task_error", task_id, error }`
-- `{ type: "task_cancelled", task_id }`
+Server → Client (current envelope):
+- Base fields:
+  - `event_type`, `task_id`, `payload`
+- Optional observability fields:
+  - `event_id`, `event_name`, `status`, `seq`, `run_id`, `tool_call_id`, `created_at`
+
+Compatibility note:
+- Frontend consumer accepts both `event_type` and legacy `type`.
+- `event_type` remains the canonical routing key.
 
 ## Alternatives Considered
 
@@ -123,5 +128,7 @@ Server → Client:
 - Task board items gain operational semantics (start → track → complete)
 - `awaiting_input` enables structured human-in-the-loop workflows
 - Process crash recovery is automatic on restart
+- Event timelines become deterministic and auditable via per-task sequence (`seq`) and run identity (`run_id`)
+- Tool call traces become queryable by `tool_call_id` for debugging and postmortem analysis
 - Future multi-connector support becomes straightforward (just add new connector adapters)
 - The existing `/connectors/hermes/chat` and `/chat/stream` endpoints remain functional for backward compatibility but are superseded by the dispatch API

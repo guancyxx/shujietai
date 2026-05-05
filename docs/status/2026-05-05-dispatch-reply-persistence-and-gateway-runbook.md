@@ -104,7 +104,76 @@ This is preferred over silent empty completion.
 - Fix Hermes gateway bind at source and remove 8643 proxy once stable.
 - Keep non-stream fallback in connector as defensive compatibility behavior.
 
-## 9) 2026-05-05 incremental UX + regression updates
+## 10) 2026-05-05 dispatch observability v2
+
+### Objective
+- Add fine-grained, queryable dispatch execution traces without breaking existing clients.
+- Keep backward compatibility on `event_type` while introducing structured event metadata.
+
+### Schema and migration
+- New migration: `backend/alembic/versions/20260505_0007_dispatch_observability_v2.py`
+- `dispatch_tasks` additions:
+  - `current_run_id` (run identity)
+  - `last_sequence` (monotonic event sequence per task)
+  - `started_at`, `finished_at` (run lifecycle timestamps)
+- `dispatch_events` additions:
+  - `seq` (strict ordering per `task_id`)
+  - `event_name` (semantic stable name)
+  - `status` (task status snapshot at emit time)
+  - `run_id` (links event to concrete run)
+  - `tool_call_id` (tool-level trace key)
+- Added indexes:
+  - `ix_dispatch_events_task_id_seq`
+  - `ix_dispatch_events_run_id`
+  - `ix_dispatch_events_tool_call_id`
+  - `ix_dispatch_tasks_current_run_id`
+- Added uniqueness guarantee:
+  - `uq_dispatch_events_task_seq` over (`task_id`, `seq`)
+
+### Compatibility and backfill
+- Migration backfills run ids, timestamps, and event ordering for existing records.
+- SQLite test path is supported with dialect-aware migration logic.
+- Existing clients that only read `event_type` continue to work.
+
+### Service and worker behavior changes
+- `DispatchService.add_event(...)` now allocates and persists per-task `seq` and rich event metadata.
+- `DispatchService.transition_task(...)` emits structured status event (`task.status.changed`) and supports optional suppression for internal transitions.
+- `DispatchWorkerPool.start_task(...)` now creates a fresh run id per started/resumed run.
+- `TaskWorker` emits normalized semantic events including:
+  - `task.status.changed`
+  - `message.user.delta`
+  - `message.assistant.delta`
+  - `message.assistant.full`
+  - `tool.call.delta`
+  - `task.progress.finish`
+  - `task.awaiting_input`
+  - `task.completed`
+  - `task.failed`
+  - `task.cancelled`
+
+### WebSocket envelope updates
+- Broadcast payload now includes optional observability fields:
+  - `event_id`, `event_name`, `status`, `seq`, `run_id`, `tool_call_id`, `created_at`
+- Base fields remain unchanged:
+  - `event_type`, `task_id`, `payload`
+
+### Frontend aggregation updates
+- `frontend/src/composables/useDispatchTask.js` now:
+  - merges REST and WS events using `seq + created_at` ordering
+  - consumes new metadata (`event_name/status/seq/run_id/tool_call_id`)
+  - aggregates tool-call deltas by `tool_call_id` for clearer tool trace display
+  - uses robust status extraction from both top-level and payload status
+
+### Verification
+- Regression tests:
+  - `backend/tests/test_dispatch_fallback_persistence.py`
+  - `backend/tests/test_alembic_migration.py`
+- Command run:
+  - `docker compose exec -T backend pytest -q tests/test_dispatch_fallback_persistence.py tests/test_alembic_migration.py`
+- Result:
+  - `3 passed`
+
+## 11) 2026-05-05 incremental UX + regression updates
 
 ### Frontend UX
 - File: `frontend/src/composables/useDispatchTask.js`

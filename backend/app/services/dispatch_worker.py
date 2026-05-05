@@ -24,6 +24,15 @@ logger = logging.getLogger(__name__)
 _AWAITING_INPUT_MARKER = "[AWAITING_INPUT]"
 
 
+def _tool_call_id(chunk: dict[str, Any]) -> str:
+    raw = str(chunk.get("id") or "").strip()
+    if raw:
+        return raw
+    index = int(chunk.get("index", 0) or 0)
+    function_name = str(chunk.get("function_name") or "tool")
+    return f"tc_{index}_{function_name}"
+
+
 class TaskWorker:
     """Single-task async worker. One instance per dispatch task run."""
 
@@ -43,21 +52,78 @@ class TaskWorker:
         task_id = self._task.id
 
         try:
-            await self._ws.broadcast(task_id, "status", {"status": "running"})
+            running_task = self._svc.transition_task(task_id, "running", emit_status_event=False)
+            if running_task is not None:
+                self._task = running_task
+            await self._emit_event(
+                "status",
+                {
+                    "status": "running",
+                    "updated_at": (self._task.updated_at.isoformat() if self._task.updated_at else None),
+                },
+                event_name="task.status.changed",
+                status="running",
+            )
             await self._execute_ai_call()
 
         except asyncio.CancelledError:
             # User cancelled via API
-            self._svc.cancel_task(task_id)
-            await self._ws.broadcast(task_id, "cancelled", {})
+            cancelled_task = self._svc.cancel_task(task_id)
+            if cancelled_task is not None:
+                self._task = cancelled_task
+            await self._emit_event(
+                "cancelled",
+                {},
+                event_name="task.cancelled",
+                status="cancelled",
+            )
             logger.info("Dispatch task %s cancelled", task_id)
 
         except Exception as exc:
             error_msg = str(exc)[:500]
-            self._svc.transition_task(task_id, "failed", error_message=error_msg)
-            self._svc.add_event(task_id, "error", {"error": error_msg})
-            await self._ws.broadcast(task_id, "error", {"error": error_msg})
+            failed_task = self._svc.transition_task(task_id, "failed", error_message=error_msg)
+            if failed_task is not None:
+                self._task = failed_task
+            await self._emit_event(
+                "error",
+                {"error": error_msg},
+                event_name="task.failed",
+                status="failed",
+            )
             logger.exception("Dispatch task %s failed: %s", task_id, error_msg)
+
+    async def _emit_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        event_name: str,
+        status: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> None:
+        task_id = self._task.id
+        event_id = self._svc.add_event(
+            task_id,
+            event_type,
+            payload,
+            event_name=event_name,
+            status=status,
+            run_id=self._task.current_run_id,
+            tool_call_id=tool_call_id,
+        )
+        event_item = self._svc.get_event(event_id)
+        await self._ws.broadcast(
+            task_id,
+            event_type,
+            payload,
+            event_id=event_id,
+            event_name=event_name,
+            status=status,
+            seq=(event_item.seq if event_item else None),
+            run_id=self._task.current_run_id,
+            tool_call_id=tool_call_id,
+            created_at=(event_item.created_at.isoformat() if event_item else None),
+        )
 
     def _write_assistant_to_store(self, content: str) -> None:
         """Persist the AI reply into the canonical timeline storage."""
@@ -99,14 +165,18 @@ class TaskWorker:
         # Determine if this is a fresh call or a resume
         if not history:
             messages.append({"role": "user", "content": self._task.initial_prompt})
-            self._svc.add_event(task_id, "content_delta", {
-                "role": "user",
-                "content": self._task.initial_prompt,
-            })
+            await self._emit_event(
+                "content_delta",
+                {
+                    "role": "user",
+                    "content": self._task.initial_prompt,
+                },
+                event_name="message.user.delta",
+                status=self._task.status,
+            )
 
         # Stream from the connector and process chunks
         full_content = ""
-        tool_calls_log: list[dict] = []
 
         async for chunk in connector.stream_completion(messages, config):
             if self._cancelled:
@@ -117,56 +187,86 @@ class TaskWorker:
             if chunk_type == "content":
                 content_piece = chunk["content"]
                 full_content += content_piece
-                self._svc.add_event(task_id, "content_delta", {
-                    "role": "assistant",
-                    "content": content_piece,
-                })
-                await self._ws.broadcast(task_id, "content_delta", {
-                    "role": "assistant",
-                    "content": content_piece,
-                })
+                await self._emit_event(
+                    "content_delta",
+                    {
+                        "role": "assistant",
+                        "content": content_piece,
+                    },
+                    event_name="message.assistant.delta",
+                    status=self._task.status,
+                )
 
             elif chunk_type == "tool_call":
-                tc_info = {
-                    "index": chunk.get("index", 0),
-                    "id": chunk.get("id", ""),
-                    "function_name": chunk.get("function_name", ""),
-                    "function_args_delta": chunk.get("function_args_delta", ""),
-                }
-                tool_calls_log.append(tc_info)
-                self._svc.add_event(task_id, "tool_call", tc_info)
-                await self._ws.broadcast(task_id, "tool_call", tc_info)
+                tool_call_id = _tool_call_id(chunk)
+                function_name = chunk.get("function_name", "")
+                function_args_delta = chunk.get("function_args_delta", "")
+                await self._emit_event(
+                    "tool_call",
+                    {
+                        "tool_call_id": tool_call_id,
+                        "index": chunk.get("index", 0),
+                        "id": chunk.get("id", ""),
+                        "function_name": function_name,
+                        "function_args_delta": function_args_delta,
+                    },
+                    event_name="tool.call.delta",
+                    status=self._task.status,
+                    tool_call_id=tool_call_id,
+                )
 
             elif chunk_type == "finish":
                 finish_reason = chunk.get("finish_reason", "")
                 usage = chunk.get("usage", {})
-                self._svc.add_event(task_id, "progress", {
-                    "finish_reason": finish_reason,
-                    "usage": usage,
-                })
+                await self._emit_event(
+                    "progress",
+                    {
+                        "finish_reason": finish_reason,
+                        "usage": usage,
+                    },
+                    event_name="task.progress.finish",
+                    status=self._task.status,
+                )
 
             elif chunk_type == "error":
                 raise RuntimeError(chunk.get("error", "unknown_connector_error"))
 
         # Store the complete assistant message in dispatch events.
-        self._svc.add_event(task_id, "content_full", {
-            "role": "assistant",
-            "content": full_content,
-        })
+        await self._emit_event(
+            "content_full",
+            {
+                "role": "assistant",
+                "content": full_content,
+            },
+            event_name="message.assistant.full",
+            status=self._task.status,
+        )
         # Persist into session timeline storage so message survives page switches/reloads.
         self._write_assistant_to_store(full_content)
 
         # Check if the AI is requesting human input
         if full_content.strip().startswith(_AWAITING_INPUT_MARKER):
             prompt = full_content.strip()[len(_AWAITING_INPUT_MARKER):].strip()
-            self._svc.transition_task(task_id, "awaiting_input")
-            self._svc.add_event(task_id, "await_input", {"prompt": prompt})
-            await self._ws.broadcast(task_id, "await_input", {"prompt": prompt})
+            awaiting_task = self._svc.transition_task(task_id, "awaiting_input", emit_status_event=False)
+            if awaiting_task is not None:
+                self._task = awaiting_task
+            await self._emit_event(
+                "await_input",
+                {"prompt": prompt},
+                event_name="task.awaiting_input",
+                status="awaiting_input",
+            )
         else:
             summary = full_content[:200] if full_content else "(no content)"
-            self._svc.transition_task(task_id, "completed")
-            self._svc.add_event(task_id, "completed", {"summary": summary})
-            await self._ws.broadcast(task_id, "completed", {"summary": summary})
+            completed_task = self._svc.transition_task(task_id, "completed", emit_status_event=False)
+            if completed_task is not None:
+                self._task = completed_task
+            await self._emit_event(
+                "completed",
+                {"summary": summary},
+                event_name="task.completed",
+                status="completed",
+            )
 
     def _build_messages(
         self,
@@ -199,6 +299,10 @@ class DispatchWorkerPool:
         """Start a background asyncio.Task for the given dispatch task."""
         if task.id in self._workers:
             return  # Already running
+
+        refreshed = self._svc.start_new_run(task.id)
+        if refreshed is not None:
+            task = refreshed
 
         worker = TaskWorker(task=task, dispatch_service=self._svc, ws_manager=self._ws)
         atask = asyncio.create_task(worker.run(), name=f"dispatch-{task.id}")

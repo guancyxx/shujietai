@@ -51,9 +51,13 @@ def _entity_to_item(entity: DispatchTaskEntity) -> DispatchTaskItem:
         status=entity.status,
         ai_platform=entity.ai_platform,
         external_session_id=entity.external_session_id,
+        current_run_id=entity.current_run_id,
+        last_sequence=entity.last_sequence or 0,
         config=entity.config or {},
         initial_prompt=entity.initial_prompt,
         error_message=entity.error_message,
+        started_at=entity.started_at,
+        finished_at=entity.finished_at,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
     )
@@ -63,7 +67,12 @@ def _event_entity_to_item(entity: DispatchEventEntity) -> DispatchEventItem:
     return DispatchEventItem(
         id=entity.id,
         task_id=entity.task_id,
+        seq=entity.seq,
         event_type=entity.event_type,
+        event_name=entity.event_name,
+        status=entity.status,
+        run_id=entity.run_id,
+        tool_call_id=entity.tool_call_id,
         payload=entity.payload or {},
         created_at=entity.created_at,
     )
@@ -136,15 +145,20 @@ class DispatchService:
         }
         now = _now()
         task_id = f"dt_{uuid4().hex[:12]}"
+        run_id = f"dr_{uuid4().hex[:12]}"
         entity = DispatchTaskEntity(
             id=task_id,
             task_board_item_id=payload.task_board_item_id,
             status="queued",
             ai_platform=payload.ai_platform,
             external_session_id=f"dispatch_{task_id}",
+            current_run_id=run_id,
+            last_sequence=0,
             config=config,
             initial_prompt=payload.initial_prompt,
             error_message=None,
+            started_at=None,
+            finished_at=None,
             created_at=now,
             updated_at=now,
         )
@@ -158,25 +172,71 @@ class DispatchService:
             stmt = (
                 select(DispatchEventEntity)
                 .where(DispatchEventEntity.task_id == task_id)
-                .order_by(DispatchEventEntity.created_at.asc())
+                .order_by(DispatchEventEntity.seq.asc(), DispatchEventEntity.created_at.asc())
                 .limit(limit)
                 .offset(offset)
             )
             rows = db.execute(stmt).scalars().all()
             return [_event_entity_to_item(r) for r in rows]
 
-    def add_event(self, task_id: str, event_type: str, payload: dict) -> str:
+    def get_event(self, event_id: str) -> DispatchEventItem | None:
+        with self._session_factory() as db:
+            entity = db.get(DispatchEventEntity, event_id)
+            if entity is None:
+                return None
+            return _event_entity_to_item(entity)
+
+    def add_event(
+        self,
+        task_id: str,
+        event_type: str,
+        payload: dict,
+        *,
+        event_name: str | None = None,
+        status: str | None = None,
+        run_id: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> str:
         """Append a dispatch event and return the event ID."""
         event_id = f"de_{uuid4().hex[:12]}"
         with self._session_factory.begin() as db:
+            task = db.get(DispatchTaskEntity, task_id)
+            if task is None:
+                raise ValueError(f"dispatch_task_not_found: {task_id}")
+
+            next_seq = max(0, task.last_sequence or 0) + 1
+            now = _now()
             db.add(DispatchEventEntity(
                 id=event_id,
                 task_id=task_id,
+                seq=next_seq,
                 event_type=event_type,
+                event_name=event_name or event_type,
+                status=status,
+                run_id=run_id or task.current_run_id,
+                tool_call_id=tool_call_id,
                 payload=payload,
-                created_at=_now(),
+                created_at=now,
             ))
+            task.last_sequence = next_seq
+            task.updated_at = now
+
         return event_id
+
+    def start_new_run(self, task_id: str) -> DispatchTaskItem | None:
+        """Create and assign a new run ID for a task run."""
+        with self._session_factory.begin() as db:
+            entity = db.get(DispatchTaskEntity, task_id)
+            if entity is None:
+                return None
+            now = _now()
+            entity.current_run_id = f"dr_{uuid4().hex[:12]}"
+            if entity.started_at is None:
+                entity.started_at = now
+            entity.finished_at = None
+            entity.updated_at = now
+            db.flush()
+            return _entity_to_item(entity)
 
     # --- State machine ---
 
@@ -190,13 +250,27 @@ class DispatchService:
         if to_status not in allowed:
             return None
 
+        now = _now()
         entity.status = to_status
-        entity.updated_at = _now()
+        entity.updated_at = now
+
+        if to_status == "running" and entity.started_at is None:
+            entity.started_at = now
+        if to_status in _TERMINAL_STATUSES:
+            entity.finished_at = now
+
         if error_message is not None:
             entity.error_message = error_message
         return entity
 
-    def transition_task(self, task_id: str, to_status: str, error_message: str | None = None) -> DispatchTaskItem | None:
+    def transition_task(
+        self,
+        task_id: str,
+        to_status: str,
+        error_message: str | None = None,
+        *,
+        emit_status_event: bool = True,
+    ) -> DispatchTaskItem | None:
         """Transition a task's status. Returns updated item or None if transition is invalid."""
         with self._session_factory.begin() as db:
             entity = self._transition(db, task_id, to_status, error_message=error_message)
@@ -204,6 +278,19 @@ class DispatchService:
                 return None
             db.flush()
             item = _entity_to_item(entity)
+
+        if emit_status_event:
+            self.add_event(
+                task_id,
+                "status",
+                {
+                    "status": to_status,
+                    "error_message": error_message,
+                },
+                event_name="task.status.changed",
+                status=to_status,
+                run_id=item.current_run_id,
+            )
 
         # Writeback to task board item if terminal status reached
         if to_status in _TERMINAL_STATUSES:
@@ -229,13 +316,20 @@ class DispatchService:
             return None
 
         # Store the user's resume message as an event
-        self.add_event(task_id, "content_delta", {
-            "role": "user",
-            "content": payload.user_message,
-        })
+        self.add_event(
+            task_id,
+            "content_delta",
+            {
+                "role": "user",
+                "content": payload.user_message,
+            },
+            event_name="message.user.delta",
+            status="running",
+            run_id=task.current_run_id,
+        )
 
         # Transition to running
-        return self.transition_task(task_id, "running")
+        return self.transition_task(task_id, "running", emit_status_event=False)
 
     # --- Cancel / Abort ---
 

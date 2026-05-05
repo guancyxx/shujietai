@@ -95,13 +95,51 @@ class _FakeDispatchService:
         self.events: list[tuple[str, str, dict]] = []
         self.persist_calls: list[dict] = []
         self.transitions: list[tuple[str, str]] = []
+        self.run_id_by_task: dict[str, str] = {}
 
     def reconstruct_history(self, task_id: str) -> list[dict[str, str]]:
         return []
 
-    def add_event(self, task_id: str, event_type: str, payload: dict) -> str:
-        self.events.append((task_id, event_type, payload))
+    def start_new_run(self, task_id: str):
+        self.run_id_by_task[task_id] = f"dr_test_{task_id}"
+        return None
+
+    def add_event(
+        self,
+        task_id: str,
+        event_type: str,
+        payload: dict,
+        *,
+        event_name: str | None = None,
+        status: str | None = None,
+        run_id: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> str:
+        event_record = {
+            "task_id": task_id,
+            "event_type": event_type,
+            "payload": payload,
+            "event_name": event_name,
+            "status": status,
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+        }
+        self.events.append((task_id, event_type, event_record))
         return f"evt_{len(self.events)}"
+
+    def get_event(self, event_id: str):
+        index = int(event_id.split("_")[-1]) - 1
+        event = self.events[index][2]
+
+        class _Event:
+            seq = index + 1
+            created_at = datetime.now(timezone.utc)
+            event_name = event.get("event_name")
+            status = event.get("status")
+            run_id = event.get("run_id")
+            tool_call_id = event.get("tool_call_id")
+
+        return _Event()
 
     def persist_message_to_session(self, platform: str, external_session_id: str, role: str, content: str, content_type: str = "text/markdown") -> None:
         self.persist_calls.append(
@@ -114,7 +152,14 @@ class _FakeDispatchService:
             }
         )
 
-    def transition_task(self, task_id: str, status: str, error_message: str | None = None):
+    def transition_task(
+        self,
+        task_id: str,
+        status: str,
+        error_message: str | None = None,
+        *,
+        emit_status_event: bool = True,
+    ):
         self.transitions.append((task_id, status))
 
     def cancel_task(self, task_id: str) -> None:
@@ -125,7 +170,13 @@ class _FakeWsManager:
     def __init__(self) -> None:
         self.broadcasts: list[tuple[str, str, dict]] = []
 
-    async def broadcast(self, task_id: str, event_type: str, payload: dict) -> None:
+    async def broadcast(
+        self,
+        task_id: str,
+        event_type: str,
+        payload: dict,
+        **kwargs,
+    ) -> None:
         self.broadcasts.append((task_id, event_type, payload))
 
 
@@ -147,9 +198,13 @@ def test_dispatch_worker_persists_assistant_message_even_if_content_arrives_afte
         status="running",
         ai_platform="hermes",
         external_session_id="dispatch_dt_test_fallback_persist",
+        current_run_id="dr_test_fallback_persist",
+        last_sequence=0,
         config={"model": "hermes-agent"},
         initial_prompt="hello",
         error_message=None,
+        started_at=now,
+        finished_at=None,
         created_at=now,
         updated_at=now,
     )
@@ -157,7 +212,10 @@ def test_dispatch_worker_persists_assistant_message_even_if_content_arrives_afte
     worker = TaskWorker(task=task, dispatch_service=service, ws_manager=ws)
     asyncio.run(worker.run())
 
-    assert any(evt_type == "content_full" and payload.get("content") == "fallback persisted reply" for _, evt_type, payload in service.events)
+    assert any(
+        evt_type == "content_full" and evt["payload"].get("content") == "fallback persisted reply"
+        for _, evt_type, evt in service.events
+    )
     assert any(
         event_type == "content_delta"
         and payload.get("role") == "assistant"

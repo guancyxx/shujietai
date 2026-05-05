@@ -323,9 +323,13 @@ class DispatchTaskItem(BaseModel):
     status: DispatchTaskStatus
     ai_platform: str
     external_session_id: str | None = None
+    current_run_id: str | None = None
+    last_sequence: int = 0
     config: dict[str, Any] = Field(default_factory=dict)
     initial_prompt: str
     error_message: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -337,7 +341,12 @@ class DispatchTaskListResponse(BaseModel):
 class DispatchEventItem(BaseModel):
     id: str
     task_id: str
+    seq: int = 0
     event_type: str
+    event_name: str = ""
+    status: str | None = None
+    run_id: str | None = None
+    tool_call_id: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
 
