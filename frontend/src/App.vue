@@ -628,10 +628,49 @@ function formatTime(value) {
   return parsed.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+async function parseErrorDetail(response) {
+  let detail = ''
+  try {
+    const data = await response.json()
+    detail = typeof data?.detail === 'string' ? data.detail : JSON.stringify(data?.detail || data || '')
+  } catch {
+    try {
+      detail = (await response.text()) || ''
+    } catch {
+      detail = ''
+    }
+  }
+  return detail.trim()
+}
+
+function mapApiError(status, detail) {
+  const normalized = String(detail || '').toLowerCase()
+  if (status === 503 && normalized.includes('gh_cli_unavailable')) {
+    return 'GitHub service is temporarily unavailable (gh CLI missing in backend). Please contact admin or retry later.'
+  }
+  if (status === 503 && normalized.includes('github_repo_create_unavailable')) {
+    return 'GitHub repo creation is unavailable: both gh CLI and token fallback are not ready. Please configure token or backend runtime.'
+  }
+  if (status === 503 && normalized.includes('github_api_failed')) {
+    return 'GitHub API is temporarily unavailable. Please retry in a moment.'
+  }
+  if (status === 401 || normalized.includes('bad credentials') || normalized.includes('requires authentication')) {
+    return 'GitHub authentication failed. Please update GitHub token in system config.'
+  }
+  if (status === 422) {
+    return `Validation failed: ${detail || 'invalid request payload'}`
+  }
+  if (detail) {
+    return `Request failed: ${status} (${detail})`
+  }
+  return `Request failed: ${status}`
+}
+
 async function fetchJson(url) {
   const response = await fetch(url)
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`)
+    const detail = await parseErrorDetail(response)
+    throw new Error(mapApiError(response.status, detail))
   }
   return response.json()
 }
@@ -643,7 +682,8 @@ async function postJson(url, payload) {
     body: JSON.stringify(payload),
   })
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`)
+    const detail = await parseErrorDetail(response)
+    throw new Error(mapApiError(response.status, detail))
   }
   return response.json()
 }
@@ -659,7 +699,8 @@ async function postJsonTimeout(url, payload, timeoutMs) {
       signal: controller.signal,
     })
     if (!response.ok) {
-      throw new Error(`Request failed: ${response.status}`)
+      const detail = await parseErrorDetail(response)
+      throw new Error(mapApiError(response.status, detail))
     }
     return await response.json()
   } finally {
@@ -674,7 +715,8 @@ async function putJson(url, payload) {
     body: JSON.stringify(payload),
   })
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`)
+    const detail = await parseErrorDetail(response)
+    throw new Error(mapApiError(response.status, detail))
   }
   return response.json()
 }
@@ -686,7 +728,8 @@ async function patchJson(url, payload) {
     body: JSON.stringify(payload),
   })
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`)
+    const detail = await parseErrorDetail(response)
+    throw new Error(mapApiError(response.status, detail))
   }
   return response.json()
 }
@@ -694,7 +737,8 @@ async function patchJson(url, payload) {
 async function deleteJson(url) {
   const response = await fetch(url, { method: 'DELETE' })
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`)
+    const detail = await parseErrorDetail(response)
+    throw new Error(mapApiError(response.status, detail))
   }
   return response.json()
 }
