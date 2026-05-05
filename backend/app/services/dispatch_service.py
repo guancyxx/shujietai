@@ -13,7 +13,7 @@ from uuid import uuid4
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import DispatchEventEntity, DispatchTaskEntity
+from app.db.models import DispatchEventEntity, DispatchTaskEntity, MessageEntity, SessionEntity
 from app.schemas import (
     DispatchCreateRequest,
     DispatchEventItem,
@@ -135,12 +135,13 @@ class DispatchService:
             "mcp_servers": payload.mcp_servers or [],
         }
         now = _now()
+        task_id = f"dt_{uuid4().hex[:12]}"
         entity = DispatchTaskEntity(
-            id=f"dt_{uuid4().hex[:12]}",
+            id=task_id,
             task_board_item_id=payload.task_board_item_id,
             status="queued",
             ai_platform=payload.ai_platform,
-            external_session_id=None,
+            external_session_id=f"dispatch_{task_id}",
             config=config,
             initial_prompt=payload.initial_prompt,
             error_message=None,
@@ -304,3 +305,52 @@ class DispatchService:
                 if role in ("user", "assistant", "system") and content:
                     history.append({"role": role, "content": content})
         return history
+
+    def persist_message_to_session(
+        self,
+        platform: str,
+        external_session_id: str,
+        role: str,
+        content: str,
+        content_type: str = "text/markdown",
+    ) -> None:
+        """Persist a chat message into the canonical session/message timeline store."""
+        if not external_session_id.strip() or not content.strip():
+            return
+
+        now = _now()
+        with self._session_factory.begin() as db:
+            session_entity = db.execute(
+                select(SessionEntity).where(
+                    SessionEntity.platform == platform,
+                    SessionEntity.external_session_id == external_session_id,
+                )
+            ).scalar_one_or_none()
+
+            if session_entity is None:
+                session_entity = SessionEntity(
+                    id=f"sess_{uuid4().hex[:12]}",
+                    platform=platform,
+                    external_session_id=external_session_id,
+                    title=f"Session {external_session_id}",
+                    status="active",
+                    started_at=now,
+                    ended_at=None,
+                    message_count=0,
+                    task_count=0,
+                )
+                db.add(session_entity)
+
+            db.add(
+                MessageEntity(
+                    id=f"msg_{uuid4().hex[:10]}",
+                    session_id=session_entity.id,
+                    role=role,
+                    content=content,
+                    content_type=content_type,
+                    created_at=now,
+                    meta_json={"source": "dispatch_worker"},
+                )
+            )
+            session_entity.message_count = max(0, session_entity.message_count) + 1
+            session_entity.ended_at = now

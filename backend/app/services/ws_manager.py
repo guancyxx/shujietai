@@ -53,9 +53,9 @@ class WsManager:
             subscribers = list(self._subscriptions.get(task_id, set()))
 
         message = json_module.dumps({
-            "type": event_type,
+            "event_type": event_type,
             "task_id": task_id,
-            **payload,
+            "payload": payload,
         })
 
         for ws in subscribers:

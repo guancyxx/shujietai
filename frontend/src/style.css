@@ -1940,6 +1940,17 @@ h2 {
   border: 1px solid rgba(255,255,255,0.08);
 }
 
+.dispatch-friendly-error {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  background: rgba(239, 68, 68, 0.08);
+  color: #fecaca;
+  font-size: 0.82rem;
+}
+
 .dispatch-status-label {
   padding: 2px 8px;
   border-radius: 12px;

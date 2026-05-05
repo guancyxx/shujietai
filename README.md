@@ -196,3 +196,4 @@ Mount-related:
 - docs/status/2026-04-28-project-status.md
 - docs/status/2026-04-28-sqlalchemy-cutover-runbook.md
 - docs/status/2026-04-28-implementation-timeline.md
+- docs/status/2026-05-05-dispatch-reply-persistence-and-gateway-runbook.md

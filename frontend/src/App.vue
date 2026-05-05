@@ -836,7 +836,7 @@ async function startConversationFromTask(task) {
     const promptMessage = '请根据上述任务上下文开始工作'
 
     // Use dispatch orchestration layer instead of direct SSE (ADR-0004)
-    await createDispatchTask({
+    const dispatchTask = await createDispatchTask({
       aiPlatform: platform,
       initialPrompt: promptMessage,
       systemPrompt,
@@ -845,6 +845,42 @@ async function startConversationFromTask(task) {
       mcpServers: [...selectedMcpServers.value],
       taskBoardItemId: task.id,
     })
+
+    // Create a session entry so the conversation appears in the list
+    const externalSessionId = dispatchTask.external_session_id || dispatchTask.id
+    await postJson(`${apiBase}/api/v1/events/ingest`, {
+      platform,
+      event_id: `evt_init_${dispatchTask.id}`,
+      event_type: 'session_started',
+      external_session_id: externalSessionId,
+      title: task.name,
+      payload_json: {
+        source: 'task-board',
+        task_board_item_id: task.id,
+        dispatch_task_id: dispatchTask.id,
+      },
+      message: {
+        role: 'user',
+        content: promptMessage,
+      },
+    })
+
+    // Inject progress system message
+    await postJson(`${apiBase}/api/v1/events/ingest`, {
+      platform,
+      event_id: `evt_progress_${dispatchTask.id}`,
+      event_type: 'dispatch_created',
+      external_session_id: externalSessionId,
+      title: task.name,
+      payload_json: { source: 'task-board', status: 'running', dispatch_task_id: dispatchTask.id },
+      message: { role: 'system', content: '🔄 已提交 Dispatch 任务，等待 AI Agent 处理中...' },
+    })
+
+    // Refresh sessions list and select the new session
+    await loadSessions()
+    selectedSessionId.value = sessions.value.find(
+      (s) => s.platform === platform && s.external_session_id === externalSessionId,
+    )?.id || selectedSessionId.value
 
     // Switch to chat page to show the dispatch task progress
     activePage.value = 'chat'
@@ -1132,6 +1168,9 @@ async function deleteSession(sessionId) {
     if (selectedSessionId.value === sessionId) {
       selectedSessionId.value = ''
       selectedExternalSessionId.value = ''
+      clearActiveTask()
+      isStreaming.value = false
+      streamingContent.value = ''
       timeline.value = { messages: [], events: [] }
       cockpit.value = null
     }
@@ -1165,6 +1204,9 @@ async function clearAllSessions() {
     }
     selectedSessionId.value = ''
     selectedExternalSessionId.value = ''
+    clearActiveTask()
+    isStreaming.value = false
+    streamingContent.value = ''
     timeline.value = { messages: [], events: [] }
     cockpit.value = null
     await loadSessions()
@@ -1406,6 +1448,7 @@ onUnmounted(() => {
                 <button v-if="dispatchActiveTask.status === 'completed' || dispatchActiveTask.status === 'failed' || dispatchActiveTask.status === 'cancelled'" type="button" class="dispatch-action-btn dispatch-close-btn" @click="clearActiveTask">清除</button>
               </div>
             </div>
+            <div v-if="dispatchError" class="dispatch-friendly-error">{{ dispatchError }}</div>
           </div>
 
           <div class="timeline-scroll" ref="timelineScrollRef">

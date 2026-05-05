@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: shujietai-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-shujietai}
       POSTGRES_USER: ${POSTGRES_USER:-shujietai}
@@ -17,6 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: shujietai-redis
+    restart: unless-stopped
     volumes:
       - shujietai_redis_data:/data
     healthcheck:
@@ -30,6 +32,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: shujietai-backend
+    restart: unless-stopped
     working_dir: /app
     env_file:
       - .env
@@ -75,6 +78,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: shujietai-frontend
+    restart: unless-stopped
     env_file:
       - .env
     environment:

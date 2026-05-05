@@ -43,21 +43,42 @@ class TaskWorker:
         task_id = self._task.id
 
         try:
-            await self._ws.broadcast(task_id, "task_status", {"status": "running"})
+            await self._ws.broadcast(task_id, "status", {"status": "running"})
             await self._execute_ai_call()
 
         except asyncio.CancelledError:
             # User cancelled via API
             self._svc.cancel_task(task_id)
-            await self._ws.broadcast(task_id, "task_cancelled", {})
+            await self._ws.broadcast(task_id, "cancelled", {})
             logger.info("Dispatch task %s cancelled", task_id)
 
         except Exception as exc:
             error_msg = str(exc)[:500]
             self._svc.transition_task(task_id, "failed", error_message=error_msg)
             self._svc.add_event(task_id, "error", {"error": error_msg})
-            await self._ws.broadcast(task_id, "task_error", {"error": error_msg})
+            await self._ws.broadcast(task_id, "error", {"error": error_msg})
             logger.exception("Dispatch task %s failed: %s", task_id, error_msg)
+
+    def _write_assistant_to_store(self, content: str) -> None:
+        """Persist the AI reply into the canonical timeline storage."""
+        if not content.strip():
+            return
+
+        external_id = (self._task.external_session_id or "").strip()
+        if not external_id:
+            return
+
+        platform = (self._task.ai_platform or "hermes").strip() or "hermes"
+        try:
+            self._svc.persist_message_to_session(
+                platform=platform,
+                external_session_id=external_id,
+                role="assistant",
+                content=content,
+                content_type="text/markdown",
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist assistant reply for task %s: %s", self._task.id, exc)
 
     async def _execute_ai_call(self) -> None:
         """Execute the AI connector call and stream results."""
@@ -87,12 +108,6 @@ class TaskWorker:
         full_content = ""
         tool_calls_log: list[dict] = []
 
-        # Set external session ID on first call
-        if self._task.external_session_id is None:
-            import os
-            ext_session_id = f"dispatch_{task_id}_{os.getpid()}"
-            self._svc.set_external_session_id(task_id, ext_session_id)
-
         async for chunk in connector.stream_completion(messages, config):
             if self._cancelled:
                 return
@@ -106,7 +121,10 @@ class TaskWorker:
                     "role": "assistant",
                     "content": content_piece,
                 })
-                await self._ws.broadcast(task_id, "content_delta", {"content": content_piece})
+                await self._ws.broadcast(task_id, "content_delta", {
+                    "role": "assistant",
+                    "content": content_piece,
+                })
 
             elif chunk_type == "tool_call":
                 tc_info = {
@@ -130,11 +148,13 @@ class TaskWorker:
             elif chunk_type == "error":
                 raise RuntimeError(chunk.get("error", "unknown_connector_error"))
 
-        # Store the complete assistant message
+        # Store the complete assistant message in dispatch events.
         self._svc.add_event(task_id, "content_full", {
             "role": "assistant",
             "content": full_content,
         })
+        # Persist into session timeline storage so message survives page switches/reloads.
+        self._write_assistant_to_store(full_content)
 
         # Check if the AI is requesting human input
         if full_content.strip().startswith(_AWAITING_INPUT_MARKER):
@@ -146,7 +166,7 @@ class TaskWorker:
             summary = full_content[:200] if full_content else "(no content)"
             self._svc.transition_task(task_id, "completed")
             self._svc.add_event(task_id, "completed", {"summary": summary})
-            await self._ws.broadcast(task_id, "task_completed", {"summary": summary})
+            await self._ws.broadcast(task_id, "completed", {"summary": summary})
 
     def _build_messages(
         self,

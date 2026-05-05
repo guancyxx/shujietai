@@ -36,6 +36,48 @@ const dispatchStatusClassMap = {
   cancelled: 'dispatch-cancelled',
 }
 
+function mapUpstreamErrorToFriendlyMessage(rawText) {
+  const text = String(rawText || '').trim()
+  if (!text) return ''
+
+  if (/(invalid api key|unauthorized|authentication failed|invalid_api_key|\b401\b)/i.test(text)) {
+    return '⚠️ AI 服务鉴权失败，请检查 Hermes API Key 配置后重试。'
+  }
+  if (/(insufficient credits|insufficient_quota|quota exceeded|余额不足|额度不足|billing|payment required)/i.test(text)) {
+    return '⚠️ AI 服务额度不足，请充值或切换可用模型后重试。'
+  }
+  if (/(rate limit|too many requests|\b429\b)/i.test(text)) {
+    return '⚠️ AI 服务请求过于频繁，请稍后重试。'
+  }
+  if (/(model not found|no endpoints found|does not support|unsupported model)/i.test(text)) {
+    return '⚠️ 当前模型不可用，请切换模型后重试。'
+  }
+  return ''
+}
+
+function normalizeAssistantErrorLikeMessage(message) {
+  if (!message || message.role !== 'assistant') return message
+  const friendly = mapUpstreamErrorToFriendlyMessage(message.content)
+  if (!friendly) return message
+
+  return {
+    ...message,
+    role: 'system',
+    content: friendly,
+    meta_json: {
+      ...(message.meta_json || {}),
+      upstream_error: true,
+      raw_error: message.content,
+    },
+  }
+}
+
+function formatTaskError(error) {
+  const raw = error instanceof Error ? error.message : 'Unknown error'
+  const friendly = mapUpstreamErrorToFriendlyMessage(raw)
+  return friendly || raw
+}
+
 const isTaskRunning = computed(() => {
   return activeTask.value && ['queued', 'running'].includes(activeTask.value.status)
 })
@@ -105,12 +147,10 @@ async function createDispatchTask({ aiPlatform = 'hermes', initialPrompt, system
       ai_platform: aiPlatform,
       initial_prompt: initialPrompt,
       task_board_item_id: taskBoardItemId,
-      config: {
-        system_prompt: systemPrompt,
-        model,
-        skills,
-        mcp_servers: mcpServers,
-      },
+      system_prompt: systemPrompt,
+      model,
+      skills,
+      mcp_servers: mcpServers,
     }
 
     const task = await postJson(`${apiBase}/api/v1/dispatch`, payload)
@@ -131,9 +171,46 @@ async function createDispatchTask({ aiPlatform = 'hermes', initialPrompt, system
     // Subscribe via WebSocket
     subscribe(task.id)
 
+    // Immediately fetch any events that were generated before WebSocket subscription
+    // (race condition: worker may have already started streaming)
+    taskEvents.value = []
+    try {
+      const eventsData = await fetchJson(`${apiBase}/api/v1/dispatch/${task.id}/events`)
+      const items = eventsData.items || eventsData || []
+      for (const evt of items) {
+        taskEvents.value.push({
+          id: evt.id,
+          event_type: evt.event_type,
+          payload: evt.payload,
+          created_at: evt.created_at || new Date().toISOString(),
+        })
+      }
+    } catch {
+      // If fetch fails, rely on WebSocket streaming only
+    }
+
+    // Fetch current task status to get updated state
+    try {
+      const updatedTask = await fetchJson(`${apiBase}/api/v1/dispatch/${task.id}`)
+      if (updatedTask) {
+        activeTask.value = updatedTask
+        // Check if task already completed/failed (terminal states)
+        if (['completed', 'failed', 'cancelled', 'aborted'].includes(updatedTask.status)) {
+          taskEvents.value.push({
+            id: `evt_terminal_${task.id}`,
+            event_type: updatedTask.status,
+            payload: { summary: updatedTask.error_message || updatedTask.status },
+            created_at: updatedTask.updated_at || new Date().toISOString(),
+          })
+        }
+      }
+    } catch {
+      // Ignore status fetch errors
+    }
+
     return task
   } catch (error) {
-    taskError.value = error instanceof Error ? error.message : 'Unknown error'
+    taskError.value = formatTaskError(error)
     throw error
   } finally {
     taskLoading.value = false
@@ -158,7 +235,7 @@ async function resumeDispatchTask(userMessage) {
 
     return task
   } catch (error) {
-    taskError.value = error instanceof Error ? error.message : 'Unknown error'
+    taskError.value = formatTaskError(error)
     throw error
   } finally {
     taskLoading.value = false
@@ -175,7 +252,7 @@ async function cancelDispatchTask() {
     unsubscribe(activeTaskId.value)
     return result
   } catch (error) {
-    taskError.value = error instanceof Error ? error.message : 'Unknown error'
+    taskError.value = formatTaskError(error)
   }
 }
 
@@ -189,7 +266,7 @@ async function abortDispatchTask() {
     unsubscribe(activeTaskId.value)
     return result
   } catch (error) {
-    taskError.value = error instanceof Error ? error.message : 'Unknown error'
+    taskError.value = formatTaskError(error)
   }
 }
 
@@ -219,20 +296,22 @@ const dispatchMessages = computed(() => {
   for (const evt of taskEvents.value) {
     if (evt.event_type === 'content_delta') {
       const payload = evt.payload || {}
+      const currentRole = payload.role || 'assistant'
       // Group consecutive content_deltas by role
       const lastMsg = messages[messages.length - 1]
-      if (lastMsg && lastMsg.role === payload.role && lastMsg._groupKey === 'content') {
+      if (lastMsg && lastMsg.role === currentRole && lastMsg._groupKey === 'content') {
         lastMsg.content += payload.content || ''
       } else {
-        messages.push({
+        const message = normalizeAssistantErrorLikeMessage({
           id: evt.id,
-          role: payload.role || 'assistant',
+          role: currentRole,
           content: payload.content || '',
           content_type: 'text/markdown',
           created_at: evt.created_at,
           meta_json: {},
           _groupKey: 'content',
         })
+        messages.push(message)
       }
     } else if (evt.event_type === 'tool_call') {
       const payload = evt.payload || {}
