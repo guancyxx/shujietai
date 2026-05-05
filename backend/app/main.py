@@ -626,7 +626,8 @@ def list_github_repositories() -> list[GitHubRepoOption]:
 @app.post("/api/v1/projects/github/repos", response_model=GitHubRepoOption)
 def create_github_repository(payload: GitHubRepoCreateRequest) -> GitHubRepoOption:
     try:
-        return github_project_service.create_repository(payload)
+        token = system_config_service.get_github_token()
+        return github_project_service.create_repository(payload, token_override=token)
     except RuntimeError as exc:
         detail = str(exc)
         if detail == "gh_cli_unavailable":

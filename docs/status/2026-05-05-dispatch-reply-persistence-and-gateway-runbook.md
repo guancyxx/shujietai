@@ -261,3 +261,38 @@ This is preferred over silent empty completion.
 - File: `backend/tests/test_dispatch_fallback_persistence.py`
 - Added test: connector stream has finish but no content -> non-stream fallback request is triggered and content chunk is emitted.
 - Added test: worker still persists assistant message into session timeline path even when content arrives after a finish chunk (fallback-shaped stream).
+
+## 12) 2026-05-05 GitHub repo creation resilience + actionable frontend errors
+
+### Backend API fallback fix
+- File: `backend/app/main.py`
+- Updated `POST /api/v1/projects/github/repos` to pass system-config token to service:
+  - from: `github_project_service.create_repository(payload)`
+  - to: `github_project_service.create_repository(payload, token_override=system_config_service.get_github_token())`
+- Effect:
+  - When `gh` CLI is unavailable in container, backend can still create repo via GitHub HTTP API (if token configured).
+  - Avoids unnecessary 503 (`gh_cli_unavailable`) in token-configured environments.
+
+### Backend container dependency fix
+- File: `backend/Dockerfile`
+- Installed `gh` CLI in backend image:
+  - apt packages now include `gh`
+- Effect:
+  - Restores GH CLI path expected by existing service logic.
+  - Reduces mismatch between local host tooling and container runtime.
+
+### Frontend error surface improvement (no more silent "stuck")
+- File: `frontend/src/App.vue`
+- Added reusable API error parsing + mapping:
+  - `parseErrorDetail(response)`
+  - `mapApiError(status, detail)`
+- All helper request functions now include server detail in thrown errors:
+  - `fetchJson`, `postJson`, `postJsonTimeout`, `putJson`, `patchJson`, `deleteJson`
+- User-facing mapping examples:
+  - `503 + gh_cli_unavailable` -> actionable GitHub service message
+  - `503 + github_api_failed` -> retry-oriented message
+  - `401/bad credentials` -> token reconfiguration guidance
+  - `422` -> validation failure with backend detail
+- Effect:
+  - Frontend no longer appears unresponsive on upstream/service failures.
+  - Operators get explicit root-cause hints from backend details.
