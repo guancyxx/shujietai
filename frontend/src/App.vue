@@ -299,11 +299,22 @@ const conversationLatestStatus = computed(() => {
   }
 })
 
-// Render markdown content safely with DOMPurify
+// Render markdown content safely with DOMPurify — with LRU cache to avoid re-parsing
+const _markdownCache = new Map()
+const _MARKDOWN_CACHE_MAX = 200
+
 function renderMarkdown(text) {
   if (!text) return ''
+  const cached = _markdownCache.get(text)
+  if (cached !== undefined) return cached
   const html = marked.parse(text, { breaks: true, gfm: true })
-  return DOMPurify.sanitize(html)
+  const safe = DOMPurify.sanitize(html)
+  if (_markdownCache.size >= _MARKDOWN_CACHE_MAX) {
+    const firstKey = _markdownCache.keys().next().value
+    _markdownCache.delete(firstKey)
+  }
+  _markdownCache.set(text, safe)
+  return safe
 }
 
 // Merged timeline: historical messages + dispatch messages (via WebSocket) + streaming assistant message

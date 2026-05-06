@@ -33,7 +33,7 @@ from app.schemas import (
     TaskBoardListResponse,
     TaskBoardUpdateRequest,
 )
-from app.services.hermes_runtime_catalog import build_runtime_state, get_selected_model, set_runtime_preferences
+from app.services.hermes_runtime_catalog import build_runtime_state, get_selected_model, invalidate_runtime_cache, set_runtime_preferences
 from app.services.github_project_service import GitHubProjectService
 from app.services.system_config_service import SystemConfigService
 from app.services.cockpit_service import get_cockpit_by_session
@@ -597,6 +597,7 @@ def update_runtime_preferences(payload: RuntimePreferenceUpdateRequest):
         selected_skills=payload.selected_skills,
         selected_mcp_servers=payload.selected_mcp_servers,
     )
+    invalidate_runtime_cache()
     return build_runtime_state().model_dump()
 
 
