@@ -258,7 +258,7 @@ class RuntimeState(BaseModel):
 class CockpitResponse(BaseModel):
     session: SessionDetail
     tasks: list[TaskItem]
-    timeline: TimelineResponse
+    timeline: TimelineResponse | None = None  # Optional: frontend fetches timeline separately
     metrics: SessionMetrics
     runtime: RuntimeState
 

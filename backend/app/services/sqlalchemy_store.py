@@ -517,8 +517,7 @@ class SqlAlchemySessionStore:
 
     def get_cockpit(self, session_id: str) -> CockpitResponse | None:
         session = self.get_session(session_id)
-        timeline = self.get_timeline(session_id)
-        if session is None or timeline is None:
+        if session is None:
             return None
 
         with self._session_factory() as db:
@@ -544,7 +543,6 @@ class SqlAlchemySessionStore:
                     )
                     for row in task_rows
                 ],
-                timeline=timeline,
                 metrics=SessionMetrics(
                     session_id=metrics_row.session_id,
                     token_in=metrics_row.token_in,

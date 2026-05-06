@@ -413,14 +413,12 @@ class SessionStore:
 
     def get_cockpit(self, session_id: str) -> CockpitResponse | None:
         session = self.get_session(session_id)
-        timeline = self.get_timeline(session_id)
         metrics = self._metrics.get(session_id)
-        if session is None or timeline is None or metrics is None:
+        if session is None or metrics is None:
             return None
         return CockpitResponse(
             session=session,
             tasks=self._tasks.get(session_id, []),
-            timeline=timeline,
             metrics=metrics,
             runtime=build_runtime_state(),
         )

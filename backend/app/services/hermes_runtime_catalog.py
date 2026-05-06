@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from threading import Lock
 from subprocess import run
@@ -19,6 +20,14 @@ _preferences: dict[str, object] = {
     "selected_model": "",
     "selected_skills": [],
     "selected_mcp_servers": [],
+}
+
+# TTL cache for build_runtime_state() — avoids expensive recomputation on every request
+_RUNTIME_CACHE_TTL = 60.0  # seconds
+_runtime_cache_lock = Lock()
+_runtime_cache: dict[str, object] = {
+    "state": None,
+    "expires_at": 0.0,
 }
 
 _PROVIDER_API_DEFAULTS: dict[str, str] = {
@@ -409,6 +418,14 @@ def get_selected_model() -> str:
 
 
 def build_runtime_state() -> RuntimeState:
+    # Fast path: return cached state if still valid
+    now = time.monotonic()
+    with _runtime_cache_lock:
+        cached = _runtime_cache["state"]
+        if cached is not None and _runtime_cache["expires_at"] > now:
+            return cached  # type: ignore[return-value]
+
+    # Slow path: compute fresh state
     config = _load_hermes_config()
 
     config_default_model, config_models, config_provider_map = _collect_models_from_config(config)
@@ -469,7 +486,7 @@ def build_runtime_state() -> RuntimeState:
     selected_model_provider = model_provider_map.get(selected_model_resolved, "") or _infer_provider_from_model_name(selected_model_resolved)
     current_model_provider = model_provider_map.get(current_model, "") or _infer_provider_from_model_name(current_model)
 
-    return RuntimeState(
+    state = RuntimeState(
         current_model=current_model,
         current_model_provider=current_model_provider,
         selected_model=selected_model_resolved,
@@ -482,3 +499,17 @@ def build_runtime_state() -> RuntimeState:
         selected_mcp_servers=selected_mcp_servers,
         available_mcp_servers=available_mcp_servers,
     )
+
+    # Store in cache
+    with _runtime_cache_lock:
+        _runtime_cache["state"] = state
+        _runtime_cache["expires_at"] = time.monotonic() + _RUNTIME_CACHE_TTL
+
+    return state
+
+
+def invalidate_runtime_cache() -> None:
+    """Invalidate the runtime state cache so next call recomputes fresh state."""
+    with _runtime_cache_lock:
+        _runtime_cache["state"] = None
+        _runtime_cache["expires_at"] = 0.0
