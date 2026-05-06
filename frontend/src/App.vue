@@ -103,6 +103,8 @@ const {
   cancelDispatchTask,
   abortDispatchTask,
   clearActiveTask,
+  handleTaskEvent,
+  handleTaskStatus,
 } = useDispatchTask()
 
 const {
@@ -153,7 +155,7 @@ async function cancelFromHistory(task) {
   } catch { /* ignore */ }
 }
 
-const { connected: wsConnected, connect: wsConnect } = useWebSocket()
+const { connected: wsConnected, connect: wsConnect, subscribe, on } = useWebSocket()
 const editingTaskBoardItemId = ref('')
 const taskBoardCreateForm = ref({
   name: '',
@@ -850,10 +852,80 @@ async function refreshData() {
   try {
     await Promise.all([loadSessions(), loadProjects(), loadTaskBoardItems(), loadGithubRepos(), loadSystemConfig()])
     await loadSessionData()
+    // Restore active dispatch task if the selected session has an associated running dispatch
+    await restoreActiveDispatchTask()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
   } finally {
     loading.value = false
+  }
+}
+
+// On page refresh, re-attach to a running/awaiting dispatch task associated with the current session
+async function restoreActiveDispatchTask() {
+  if (!selectedExternalSessionId.value) return
+
+  // external_session_id format: "dispatch_{task_id}" — extract the dispatch task ID
+  const dispatchPrefix = 'dispatch_'
+  if (!selectedExternalSessionId.value.startsWith(dispatchPrefix)) return
+
+  const taskId = selectedExternalSessionId.value.slice(dispatchPrefix.length)
+  if (!taskId) return
+
+  try {
+    // Fetch current task state from backend
+    const task = await fetchJson(`${apiBase}/api/v1/dispatch/${taskId}`)
+    if (!task) return
+
+    // Only restore if task is in a non-terminal state
+    const nonTerminalStatuses = ['queued', 'running', 'awaiting_input', 'paused']
+    if (!nonTerminalStatuses.includes(task.status)) return
+
+    // Set as active task in the composable
+    activeTaskId.value = task.id
+    activeTask.value = task
+
+    // Register WebSocket event listeners
+    on('status', handleTaskStatus)
+    on('content_delta', handleTaskEvent)
+    on('tool_call', handleTaskEvent)
+    on('await_input', handleTaskEvent)
+    on('completed', handleTaskEvent)
+    on('error', handleTaskEvent)
+    on('cancelled', handleTaskEvent)
+
+    // Subscribe to task events via WebSocket
+    if (connected.value) {
+      subscribe(task.id)
+    } else {
+      wsConnect()
+      // Subscribe once connected (next tick is sufficient — ws connect is near-instant on same host)
+      await new Promise(resolve => setTimeout(resolve, 500))
+      if (connected.value) subscribe(task.id)
+    }
+
+    // Load existing events from REST (catch up on anything before WS subscription)
+    const eventsData = await fetchJson(`${apiBase}/api/v1/dispatch/${task.id}/events`)
+    const items = eventsData.items || eventsData || []
+    taskEvents.value = items.map(evt => ({
+      id: evt.id,
+      event_type: evt.event_type,
+      event_name: evt.event_name || evt.event_type || '',
+      status: evt.status || null,
+      seq: Number.isFinite(evt.seq) ? evt.seq : Number.MAX_SAFE_INTEGER,
+      run_id: evt.run_id || null,
+      tool_call_id: evt.tool_call_id || null,
+      payload: evt.payload,
+      created_at: evt.created_at || new Date().toISOString(),
+    }))
+    taskEvents.value.sort((a, b) => {
+      const seqA = Number.isFinite(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
+      const seqB = Number.isFinite(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
+      if (seqA !== seqB) return seqA - seqB
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    })
+  } catch {
+    // If restore fails, the session timeline is still loaded — user sees historical messages
   }
 }
 
