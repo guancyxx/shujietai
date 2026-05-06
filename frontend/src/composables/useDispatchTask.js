@@ -436,5 +436,9 @@ export function useDispatchTask() {
     cancelDispatchTask,
     abortDispatchTask,
     clearActiveTask,
+
+    // Expose for dispatch task restore on page refresh
+    handleTaskEvent,
+    handleTaskStatus,
   }
 }
