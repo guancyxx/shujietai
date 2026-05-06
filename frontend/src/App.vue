@@ -63,6 +63,26 @@ const streamingContent = ref('')        // Current streaming assistant message c
 const isStreaming = ref(false)           // Whether a stream is in progress
 const streamAbortController = ref(null) // AbortController for cancelling streams
 const timelineScrollRef = ref(null)   // Ref for auto-scrolling timeline container
+const userScrolledUp = ref(false)     // Whether user manually scrolled up (pause auto-scroll)
+
+// Scroll timeline to bottom. If force=true, always scroll; otherwise respect user scroll state.
+function scrollToBottom(force = false) {
+  if (!timelineScrollRef.value) return
+  if (!force && userScrolledUp.value) return
+  nextTick(() => {
+    const el = timelineScrollRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+// Detect if user scrolled away from bottom
+function onTimelineScroll() {
+  const el = timelineScrollRef.value
+  if (!el) return
+  // 40px threshold — close enough to bottom counts as "at bottom"
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+  userScrolledUp.value = !atBottom
+}
 
 // Dispatch orchestration layer (ADR-0004) — replaces direct SSE with async dispatch + WebSocket
 const {
@@ -336,6 +356,9 @@ const displayMessages = computed(() => {
   }
   return msgs
 })
+
+// Auto-scroll to bottom when displayMessages change (respects user scroll state)
+watch(displayMessages, () => scrollToBottom(), { deep: true })
 
 const taskLanes = computed(() => {
   const laneMap = { todo: [], doing: [], done: [] }
@@ -990,11 +1013,9 @@ async function startConversationFromTask(task) {
     // Switch to chat page to show the dispatch task progress
     activePage.value = 'chat'
 
-    // Auto-scroll to bottom
-    await nextTick()
-    if (timelineScrollRef.value) {
-      timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-    }
+    // Auto-scroll to bottom and reset user scroll state
+    userScrolledUp.value = false
+    scrollToBottom(true)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
   } finally {
@@ -1422,11 +1443,9 @@ async function sendMessageToHermes() {
       })
     }
 
-    // Auto-scroll to bottom as content streams in via WebSocket
-    await nextTick()
-    if (timelineScrollRef.value) {
-      timelineScrollRef.value.scrollTop = timelineScrollRef.value.scrollHeight
-    }
+    // Auto-scroll to bottom and reset user scroll state (new message sent)
+    userScrolledUp.value = false
+    scrollToBottom(true)
   } catch (error) {
     if (error.name !== 'AbortError') {
       errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
@@ -1437,6 +1456,7 @@ async function sendMessageToHermes() {
 }
 
 watch(selectedSessionId, async () => {
+  userScrolledUp.value = false
   if (!selectedSessionId.value) {
     timeline.value = { messages: [], events: [] }
     cockpit.value = null
@@ -1445,6 +1465,7 @@ watch(selectedSessionId, async () => {
   try {
     errorMessage.value = ''
     await loadSessionData()
+    scrollToBottom(true)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
   }
@@ -1599,7 +1620,7 @@ onUnmounted(() => {
             <div v-if="dispatchError" class="dispatch-friendly-error">{{ dispatchError }}</div>
           </div>
 
-          <div class="timeline-scroll" ref="timelineScrollRef">
+          <div class="timeline-scroll" ref="timelineScrollRef" @scroll="onTimelineScroll">
             <div v-if="displayMessages.length === 0" class="muted">暂无消息</div>
             <div
               v-for="message in displayMessages"
