@@ -984,35 +984,36 @@ async function restoreActiveDispatchTask() {
     const task = await fetchJson(`${apiBase}/api/v1/dispatch/${taskId}`)
     if (!task) return
 
-    // Only restore if task is in a non-terminal state
-    const nonTerminalStatuses = ['queued', 'running', 'awaiting_input', 'paused']
-    if (!nonTerminalStatuses.includes(task.status)) return
-
-    // Set as active task in the composable
+    // Set as active task in the composable (always — even for terminal tasks, to show history)
     activeTaskId.value = task.id
     activeTask.value = task
 
-    // Register WebSocket event listeners
-    on('status', handleTaskStatus)
-    on('content_delta', handleTaskEvent)
-    on('tool_call', handleTaskEvent)
-    on('await_input', handleTaskEvent)
-    on('completed', handleTaskEvent)
-    on('error', handleTaskEvent)
-    on('cancelled', handleTaskEvent)
+    const nonTerminalStatuses = ['queued', 'running', 'awaiting_input', 'paused']
+    const isLive = nonTerminalStatuses.includes(task.status)
 
-    // Subscribe to task events via WebSocket
-    if (connected.value) {
-      subscribe(task.id)
-    } else {
-      wsConnect()
-      // Subscribe once connected (next tick is sufficient — ws connect is near-instant on same host)
-      await new Promise(resolve => setTimeout(resolve, 500))
-      if (connected.value) subscribe(task.id)
+    if (isLive) {
+      // Register WebSocket event listeners only for live tasks
+      on('status', handleTaskStatus)
+      on('content_delta', handleTaskEvent)
+      on('tool_call', handleTaskEvent)
+      on('await_input', handleTaskEvent)
+      on('completed', handleTaskEvent)
+      on('error', handleTaskEvent)
+      on('cancelled', handleTaskEvent)
+
+      // Subscribe to task events via WebSocket
+      if (connected.value) {
+        subscribe(task.id)
+      } else {
+        wsConnect()
+        await new Promise(resolve => setTimeout(resolve, 500))
+        if (connected.value) subscribe(task.id)
+      }
     }
 
-    // Load existing events from REST (catch up on anything before WS subscription)
-    const eventsData = await fetchJson(`${apiBase}/api/v1/dispatch/${task.id}/events`)
+    // Load existing events from REST (always — shows full execution history)
+    // Use a large limit to fetch all events in one request (backend default is 200)
+    const eventsData = await fetchJson(`${apiBase}/api/v1/dispatch/${task.id}/events?limit=2000`)
     const items = eventsData.items || eventsData || []
     taskEvents.value = items.map(evt => ({
       id: evt.id,
@@ -1804,7 +1805,8 @@ onUnmounted(() => {
           </div>
 
           <div class="timeline-scroll" ref="timelineScrollRef" @scroll="onTimelineScroll">
-            <div v-if="displayMessages.length === 0 && dispatchTaskId" class="muted">⏳ 正在恢复任务进度，接入实时数据流中...</div>
+            <div v-if="displayMessages.length === 0 && dispatchTaskId && dispatchActiveTask && ['queued','running','awaiting_input','paused'].includes(dispatchActiveTask.status)" class="muted">⏳ 正在恢复任务进度，接入实时数据流中...</div>
+            <div v-else-if="displayMessages.length === 0 && dispatchTaskId" class="muted">📭 暂无执行记录</div>
             <div v-else-if="displayMessages.length === 0" class="muted">暂无消息</div>
             <div
               v-for="message in displayMessages"
