@@ -609,6 +609,7 @@ def get_skills_catalog():
             "name": name,
             "description": item.description,
             "category": category,
+            "skill_type": item.skill_type,
         })
 
     return {

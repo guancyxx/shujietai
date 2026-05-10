@@ -133,6 +133,8 @@ const skillsCatalogError = ref('')
 const skillsCatalogSearch = ref('')
 const skillsCatalogCategoryFilter = ref('全部')
 const skillsCatalogProviderFilter = ref('hermes')
+const skillsCatalogTypeFilter = ref('全部')
+const skillDetailTarget = ref(null)
 
 const skillsCatalogProviders = computed(() => {
   if (!skillsCatalog.value) return [{ id: 'hermes', label: 'Hermes Agent' }]
@@ -153,15 +155,24 @@ const filteredCatalogSkills = computed(() => {
   if (!provider) return []
   const keyword = skillsCatalogSearch.value.trim().toLowerCase()
   const catFilter = skillsCatalogCategoryFilter.value
+  const typeFilter = skillsCatalogTypeFilter.value
   return provider.skills
     .filter((s) => {
       const catOk = catFilter === '全部' || s.category === catFilter
-      if (!catOk) return false
+      const typeOk = typeFilter === '全部' || (s.skill_type || 'builtin') === typeFilter
+      if (!catOk || !typeOk) return false
       if (!keyword) return true
       return s.name.toLowerCase().includes(keyword) || (s.description || '').toLowerCase().includes(keyword)
     })
     .map((s) => ({ ...s, provider_id: provider.id, provider_label: provider.label }))
 })
+
+function openSkillDetail(skill) {
+  skillDetailTarget.value = skill
+}
+function closeSkillDetail() {
+  skillDetailTarget.value = null
+}
 
 async function loadSkillsCatalog() {
   skillsCatalogLoading.value = true
@@ -2073,6 +2084,12 @@ onUnmounted(() => {
                 <option value="全部">全部分类</option>
                 <option v-for="cat in skillsCatalogCategories" :key="cat" :value="cat">{{ cat }}</option>
               </select>
+              <select v-model="skillsCatalogTypeFilter" class="dispatch-filter-select">
+                <option value="全部">全部类型</option>
+                <option value="builtin">内置</option>
+                <option value="custom">自建</option>
+                <option value="third-party">第三方</option>
+              </select>
               <input v-model="skillsCatalogSearch" class="picker-search-input skills-catalog-search" placeholder="搜索 skill 名称或描述" />
               <button type="button" class="picker-btn ghost" @click="loadSkillsCatalog" :disabled="skillsCatalogLoading">
                 {{ skillsCatalogLoading ? '加载中...' : '刷新' }}
@@ -2082,26 +2099,45 @@ onUnmounted(() => {
 
           <div v-if="skillsCatalogError" class="skills-catalog-error muted">{{ skillsCatalogError }}</div>
           <div v-else-if="skillsCatalogLoading" class="skills-catalog-loading muted">加载中...</div>
-          <div v-else>
+          <template v-else>
             <div class="skills-catalog-meta muted">共 {{ filteredCatalogSkills.length }} 个 skills</div>
-            <div class="skills-catalog-list">
+            <div class="skills-catalog-list scrollbar-themed">
               <div
                 v-for="skill in filteredCatalogSkills"
                 :key="skill.provider_id + '/' + skill.name"
                 class="skill-card"
+                @click="openSkillDetail(skill)"
               >
-                <div class="skill-card-top">
-                  <span class="skill-card-name">{{ skill.name }}</span>
+                <div class="skill-card-badges">
+                  <span :class="['skill-type-badge', 'skill-type-' + (skill.skill_type || 'builtin')]">
+                    {{ skill.skill_type === 'custom' ? '自建' : skill.skill_type === 'third-party' ? '第三方' : '内置' }}
+                  </span>
                   <span class="skill-category-badge">{{ skill.category }}</span>
                 </div>
-                <div class="skill-card-desc">{{ skill.description || '-' }}</div>
+                <div class="skill-card-name">{{ skill.name }}</div>
+                <div class="skill-card-desc">{{ skill.description || '暂无描述' }}</div>
               </div>
               <div v-if="filteredCatalogSkills.length === 0" class="muted">无匹配 skills</div>
             </div>
-          </div>
+          </template>
         </article>
       </section>
     </section>
+
+    <!-- Skill Detail Modal -->
+    <div v-if="skillDetailTarget" class="skill-detail-overlay" @click.self="closeSkillDetail">
+      <div class="skill-detail-modal scrollbar-themed">
+        <button class="skill-detail-close" @click="closeSkillDetail" aria-label="关闭">✕</button>
+        <div class="skill-detail-title">{{ skillDetailTarget.name }}</div>
+        <div class="skill-detail-badges">
+          <span :class="['skill-type-badge', 'skill-type-' + (skillDetailTarget.skill_type || 'builtin')]">
+            {{ skillDetailTarget.skill_type === 'custom' ? '自建' : skillDetailTarget.skill_type === 'third-party' ? '第三方' : '内置' }}
+          </span>
+          <span class="skill-category-badge">{{ skillDetailTarget.category }}</span>
+        </div>
+        <div class="skill-detail-desc">{{ skillDetailTarget.description || '暂无描述' }}</div>
+      </div>
+    </div>
 
     <div v-if="isCreateConversationModalOpen" class="picker-modal-overlay" @click.self="closeCreateConversationModal">
       <div class="picker-modal panel create-conversation-modal">

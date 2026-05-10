@@ -234,6 +234,7 @@ class SessionMetrics(BaseModel):
 class RuntimeSkillItem(BaseModel):
     name: str
     description: str = ""
+    skill_type: str = "builtin"  # "builtin" | "custom" | "third-party"
 
 
 class RuntimeModelItem(BaseModel):
