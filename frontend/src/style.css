@@ -2452,25 +2452,54 @@ h2 {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 14px;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 12px;
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .skills-catalog-header h2 {
   margin: 0;
   font-size: 1.1rem;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .skills-catalog-controls {
   display: flex;
   gap: 8px;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex: 1;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+/* normalize all controls to the same height */
+.skills-catalog-controls .dispatch-filter-select,
+.skills-catalog-controls .picker-search-input,
+.skills-catalog-controls .picker-btn {
+  height: 32px;
+  min-height: unset;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+  font-size: 0.8rem;
+}
+
+.skills-catalog-controls .picker-btn {
+  min-width: unset;
+  padding-left: 14px;
+  padding-right: 14px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .skills-catalog-search {
-  min-width: 200px;
+  flex: 1;
+  min-width: 120px;
+  max-width: 260px;
+  width: auto;
 }
 
 .skills-catalog-meta {
