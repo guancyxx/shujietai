@@ -7,6 +7,7 @@ from typing import Any
 
 from app.connectors.ai_base import StreamingAIConnector
 from app.connectors.hermes_streaming import HermesStreamingConnector
+from app.connectors.hermes_runs_connector import HermesRunsConnector
 
 logger = logging.getLogger(__name__)
 
@@ -33,3 +34,4 @@ def list_platforms() -> list[str]:
 def register_defaults() -> None:
     """Register the built-in connector set. Called once at app startup."""
     register_connector(HermesStreamingConnector())
+    register_connector(HermesRunsConnector())

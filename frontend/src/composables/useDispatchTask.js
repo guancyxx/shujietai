@@ -401,6 +401,27 @@ const dispatchMessages = computed(() => {
           ? `✅ Tool completed: **${toolState.message.meta_json.function_name || functionName}**`
           : `🔧 Calling: **${toolState.message.meta_json.function_name || functionName}**`
       }
+    } else if (evt.event_type === 'agent_thinking') {
+      // Reasoning / thinking text from extended-thinking models or runs connector
+      const thinkingText = payload.text || ''
+      if (thinkingText) {
+        const lastMsg = messages[messages.length - 1]
+        // Accumulate into existing thinking bubble if it's still the last message
+        if (lastMsg && lastMsg._groupKey === 'agent_thinking') {
+          lastMsg.content += thinkingText
+          lastMsg.updatedAt = evt.created_at
+        } else {
+          messages.push({
+            id: evt.id,
+            role: 'assistant',
+            content: thinkingText,
+            content_type: 'text/plain',
+            created_at: evt.created_at,
+            meta_json: { thinking: true },
+            _groupKey: 'agent_thinking',
+          })
+        }
+      }
     } else if (evt.event_type === 'error') {
       messages.push({
         id: evt.id,
