@@ -45,7 +45,7 @@ class HermesRunsConnector:
     callers choose which flavour they want via ``ai_platform`` on the task.
     """
 
-    platform_name = "hermes_runs"
+    platform_name = "hermes-runs"
 
     def _env(self) -> tuple[str, str, float]:
         """Return (base_url, api_key, timeout_seconds) from env."""
