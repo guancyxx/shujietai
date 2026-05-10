@@ -230,37 +230,53 @@ def _extract_skill_description(skill_file: Path) -> str:
     return ""
 
 
+def _source_to_skill_type(source: str) -> str:
+    """Map hermes skills list source column value to a skill_type label."""
+    s = (source or "").strip().lower()
+    if s in ("personal-skills", "personal_skills", "custom"):
+        return "custom"
+    if s in ("builtin", "skills", ""):
+        return "builtin"
+    if s:
+        return "third-party"
+    return "builtin"
+
+
 def _collect_skill_items_from_filesystem() -> list[RuntimeSkillItem]:
     skills_dir = Path(os.getenv("HERMES_SKILLS_DIR", "/home/guancy/.hermes/skills"))
-    if not skills_dir.exists():
-        return []
+    personal_dir = Path(os.getenv("HERMES_PERSONAL_SKILLS_DIR", "/home/guancy/.hermes/personal-skills"))
 
     items: list[RuntimeSkillItem] = []
     seen: set[str] = set()
 
-    for skill_file in skills_dir.rglob("SKILL.md"):
-        if not skill_file.is_file():
-            continue
-
-        rel = skill_file.parent.relative_to(skills_dir)
-        parts = rel.parts
-        if len(parts) == 1:
-            full_name = parts[0]
-        elif len(parts) >= 2:
-            full_name = f"{parts[0]}/{parts[1]}"
-        else:
-            continue
-
-        if full_name in seen:
-            continue
-
-        seen.add(full_name)
-        items.append(
-            RuntimeSkillItem(
-                name=full_name,
-                description=_extract_skill_description(skill_file),
+    def _scan(base_dir: Path, default_type: str) -> None:
+        if not base_dir.exists():
+            return
+        for skill_file in base_dir.rglob("SKILL.md"):
+            if not skill_file.is_file():
+                continue
+            rel = skill_file.parent.relative_to(base_dir)
+            parts = rel.parts
+            if len(parts) == 1:
+                full_name = parts[0]
+            elif len(parts) >= 2:
+                full_name = f"{parts[0]}/{parts[1]}"
+            else:
+                continue
+            if full_name in seen:
+                continue
+            seen.add(full_name)
+            items.append(
+                RuntimeSkillItem(
+                    name=full_name,
+                    description=_extract_skill_description(skill_file),
+                    skill_type=default_type,
+                )
             )
-        )
+
+    # personal-skills override builtin; scan personal first so duplicates are "custom"
+    _scan(personal_dir, "custom")
+    _scan(skills_dir, "builtin")
 
     items.sort(key=lambda item: item.name)
     return items
@@ -311,8 +327,9 @@ def _collect_skill_items_from_hermes_cli() -> list[RuntimeSkillItem]:
             continue
 
         seen.add(full_name)
+        skill_type = _source_to_skill_type(source)
         description = f"source={source or '-'} · trust={trust or '-'} · status={status or '-'}"
-        items.append(RuntimeSkillItem(name=full_name, description=description))
+        items.append(RuntimeSkillItem(name=full_name, description=description, skill_type=skill_type))
 
     items.sort(key=lambda item: item.name)
     return items
@@ -453,6 +470,7 @@ def build_runtime_state() -> RuntimeState:
         merged_skill_map[item.name] = RuntimeSkillItem(
             name=item.name,
             description=fs_desc_map.get(item.name, item.description),
+            skill_type=item.skill_type,
         )
     for item in fs_skill_items:
         if item.name not in merged_skill_map:
