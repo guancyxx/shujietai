@@ -2702,3 +2702,35 @@ h2 {
 .skill-detail-modal {
   max-width: 760px;
 }
+/* ── Skill Graph ──────────────────────────────────────── */
+.sg-view-switch {
+  display: flex;
+  gap: 2px;
+  background: rgba(111,186,255,0.08);
+  border-radius: 6px;
+  padding: 2px;
+}
+.sg-view-switch .picker-btn {
+  border-radius: 4px;
+  padding: 3px 10px;
+  height: 26px;
+  font-size: 12px;
+}
+.sg-view-switch .picker-btn.active {
+  background: rgba(111,186,255,0.25);
+  color: #6fbafe;
+}
+
+.sg-embedded {
+  flex: 1;
+  min-height: 0;
+  height: 560px;
+  display: flex;
+  flex-direction: column;
+}
+
+.skills-catalog-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}

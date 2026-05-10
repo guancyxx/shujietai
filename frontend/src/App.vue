@@ -5,6 +5,7 @@ import DOMPurify from 'dompurify'
 import { useWebSocket } from './composables/useWebSocket.js'
 import { useDispatchTask } from './composables/useDispatchTask.js'
 import { useDispatchHistory } from './composables/useDispatchHistory.js'
+import SkillGraph from './SkillGraph.vue'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 
@@ -139,6 +140,7 @@ const skillDetailContent = ref('')
 const skillDetailContentLoading = ref(false)
 const skillsCatalogPage = ref(1)
 const skillsCatalogPageSize = 30
+const skillsCatalogView = ref('list')  // 'list' | 'graph'
 
 const skillsCatalogProviders = computed(() => {
   if (!skillsCatalog.value) return [{ id: 'hermes', label: 'Hermes Agent' }]
@@ -2103,26 +2105,37 @@ onUnmounted(() => {
           <div class="skills-catalog-header">
             <h2>Skills 库</h2>
             <div class="skills-catalog-controls">
-              <select v-model="skillsCatalogProviderFilter" class="dispatch-filter-select">
-                <option v-for="p in skillsCatalogProviders" :key="p.id" :value="p.id">{{ p.label }}</option>
-              </select>
-              <select v-model="skillsCatalogCategoryFilter" class="dispatch-filter-select">
-                <option value="全部">全部分类</option>
-                <option v-for="cat in skillsCatalogCategories" :key="cat" :value="cat">{{ cat }}</option>
-              </select>
-              <select v-model="skillsCatalogTypeFilter" class="dispatch-filter-select">
-                <option value="全部">全部类型</option>
-                <option value="builtin">内置</option>
-                <option value="custom">自建</option>
-                <option value="third-party">第三方</option>
-              </select>
-              <input v-model="skillsCatalogSearch" class="picker-search-input skills-catalog-search" placeholder="搜索 skill 名称或描述" />
-              <button type="button" class="picker-btn ghost" @click="loadSkillsCatalog" :disabled="skillsCatalogLoading">
-                {{ skillsCatalogLoading ? '加载中...' : '刷新' }}
-              </button>
+              <div class="sg-view-switch">
+                <button type="button" class="picker-btn" :class="{ active: skillsCatalogView === 'list' }" @click="skillsCatalogView = 'list'">列表</button>
+                <button type="button" class="picker-btn" :class="{ active: skillsCatalogView === 'graph' }" @click="skillsCatalogView = 'graph'">图谱</button>
+              </div>
+              <template v-if="skillsCatalogView === 'list'">
+                <select v-model="skillsCatalogProviderFilter" class="dispatch-filter-select">
+                  <option v-for="p in skillsCatalogProviders" :key="p.id" :value="p.id">{{ p.label }}</option>
+                </select>
+                <select v-model="skillsCatalogCategoryFilter" class="dispatch-filter-select">
+                  <option value="全部">全部分类</option>
+                  <option v-for="cat in skillsCatalogCategories" :key="cat" :value="cat">{{ cat }}</option>
+                </select>
+                <select v-model="skillsCatalogTypeFilter" class="dispatch-filter-select">
+                  <option value="全部">全部类型</option>
+                  <option value="builtin">内置</option>
+                  <option value="custom">自建</option>
+                  <option value="third-party">第三方</option>
+                </select>
+                <input v-model="skillsCatalogSearch" class="picker-search-input skills-catalog-search" placeholder="搜索 skill 名称或描述" />
+                <button type="button" class="picker-btn ghost" @click="loadSkillsCatalog" :disabled="skillsCatalogLoading">
+                  {{ skillsCatalogLoading ? '加载中...' : '刷新' }}
+                </button>
+              </template>
             </div>
           </div>
 
+          <!-- Graph view -->
+          <SkillGraph v-if="skillsCatalogView === 'graph'" :api-base="apiBase" class="sg-embedded" />
+
+          <!-- List view -->
+          <div v-if="skillsCatalogView === 'list'">
           <div v-if="skillsCatalogError" class="skills-catalog-error muted">{{ skillsCatalogError }}</div>
           <div v-else-if="skillsCatalogLoading" class="skills-catalog-loading muted">加载中...</div>
           <template v-else>
@@ -2151,6 +2164,7 @@ onUnmounted(() => {
               <button class="picker-btn ghost" :disabled="skillsCatalogPage >= skillsCatalogTotalPages" @click="skillsCatalogPage++">下一页</button>
             </div>
           </template>
+          </div><!-- end list view -->
         </article>
       </section>
     </section>

@@ -624,6 +624,99 @@ def get_skills_catalog():
     }
 
 
+@app.get("/api/v1/skills/graph")
+def get_skills_graph():
+    """Return a node-link graph for the skill catalog.
+
+    Nodes are skill categories (macro view). Edges connect categories that share
+    at least one tag in common across their member skills.
+
+    Node shape: {id, label, skill_count, tags}
+    Edge shape: {source, target, weight}
+    """
+    import re as _re
+    import yaml as _yaml
+
+    skills_dir = Path(os.getenv("HERMES_SKILLS_DIR", "/home/guancy/.hermes/skills"))
+    personal_dir = Path(os.getenv("HERMES_PERSONAL_SKILLS_DIR", "/home/guancy/.hermes/personal-skills"))
+
+    # category -> {skill_name -> [tags]}
+    cat_skills: dict[str, dict[str, list[str]]] = {}
+
+    for base_dir in (personal_dir, skills_dir):
+        if not base_dir.exists():
+            continue
+        for skill_md in base_dir.rglob("SKILL.md"):
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            m = _re.match(r"^---\n(.*?)\n---", text, _re.DOTALL)
+            tags: list[str] = []
+            name = ""
+            if m:
+                try:
+                    fm = _yaml.safe_load(m.group(1)) or {}
+                    name = fm.get("name", "")
+                    tags = (
+                        fm.get("tags")
+                        or (fm.get("metadata") or {}).get("hermes", {}).get("tags", [])
+                        or []
+                    )
+                    if not isinstance(tags, list):
+                        tags = []
+                except Exception:
+                    pass
+            # Derive category and short name from filesystem path relative to base_dir
+            try:
+                rel = skill_md.relative_to(base_dir)
+                parts = rel.parts  # e.g. ('devops', 'kanban-worker', 'SKILL.md')
+                if len(parts) >= 3:
+                    category = parts[0]
+                    skill_key = f"{parts[0]}/{parts[1]}"
+                elif len(parts) == 2:
+                    category = "general"
+                    skill_key = parts[0]
+                else:
+                    category = "general"
+                    skill_key = name or skill_md.parent.name
+            except Exception:
+                category = name.split("/")[0] if "/" in name else "general"
+                skill_key = name or skill_md.parent.name
+            if not name:
+                name = skill_key
+            cat_skills.setdefault(category, {})[skill_key] = tags
+
+    # Build nodes
+    nodes = []
+    for cat, skills in sorted(cat_skills.items()):
+        all_tags: set[str] = set()
+        for t in skills.values():
+            all_tags.update(t)
+        nodes.append({
+            "id": cat,
+            "label": cat,
+            "skill_count": len(skills),
+            "tags": sorted(all_tags),
+            "skills": [
+                {"name": n, "tags": t}
+                for n, t in sorted(skills.items())
+            ],
+        })
+
+    # Build edges: categories sharing >=1 tag
+    node_tags = {n["id"]: set(n["tags"]) for n in nodes}
+    edges = []
+    node_ids = [n["id"] for n in nodes]
+    for i, a in enumerate(node_ids):
+        for b in node_ids[i + 1 :]:
+            shared = node_tags[a] & node_tags[b]
+            if shared:
+                edges.append({"source": a, "target": b, "weight": len(shared), "shared_tags": sorted(shared)})
+
+    return {"nodes": nodes, "edges": edges}
+
+
 @app.get("/api/v1/skills/{skill_name:path}/content")
 def get_skill_content(skill_name: str):
     """Return the raw SKILL.md content for a given skill name (e.g. 'devops/kanban-worker')."""
