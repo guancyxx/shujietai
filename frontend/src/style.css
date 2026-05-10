@@ -831,6 +831,147 @@ h2 {
   animation: pulse-glow 1.5s ease-in-out infinite;
 }
 
+/* ===== Thinking bubble ===== */
+.msg-thinking {
+  width: min(94%, 680px);
+  background: rgba(38, 30, 70, 0.5);
+  border-color: rgba(160, 130, 230, 0.3);
+  padding: 0;
+  overflow: hidden;
+}
+
+.thinking-bubble {
+  width: 100%;
+}
+
+.thinking-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(200, 180, 255, 0.85);
+  user-select: none;
+  list-style: none;
+}
+
+.thinking-summary::-webkit-details-marker { display: none; }
+
+.thinking-summary::before {
+  content: '▶';
+  font-size: 10px;
+  transition: transform 0.2s;
+  color: rgba(170, 145, 255, 0.7);
+}
+
+details[open] .thinking-summary::before {
+  transform: rotate(90deg);
+}
+
+.thinking-icon { font-size: 15px; }
+
+.thinking-chars {
+  margin-left: auto;
+  font-size: 11px;
+  color: rgba(160, 140, 210, 0.6);
+}
+
+.thinking-content {
+  margin: 0;
+  padding: 8px 14px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(200, 185, 255, 0.72);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px solid rgba(140, 110, 210, 0.18);
+  background: rgba(20, 14, 45, 0.45);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* ===== Tool call bubble ===== */
+.msg-tool {
+  width: min(88%, 600px);
+  background: rgba(20, 40, 50, 0.55);
+  border-color: rgba(90, 190, 210, 0.28);
+  padding: 0;
+}
+
+.tool-bubble {
+  padding: 8px 12px;
+}
+
+.tool-running .tool-header {
+  color: rgba(130, 210, 240, 0.85);
+}
+
+.tool-done .tool-header {
+  color: rgba(130, 230, 170, 0.85);
+}
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.tool-status-icon { font-size: 15px; }
+
+.tool-name {
+  flex: 1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.tool-duration {
+  font-size: 11px;
+  color: rgba(130, 200, 150, 0.6);
+}
+
+.tool-spinning {
+  font-size: 11px;
+  color: rgba(130, 200, 240, 0.55);
+  animation: pulse-glow 1s ease-in-out infinite;
+}
+
+.tool-error-text {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(255, 130, 120, 0.8);
+  padding-left: 22px;
+}
+
+.tool-args-details {
+  margin-top: 5px;
+}
+
+.tool-args-details summary {
+  font-size: 11px;
+  color: rgba(130, 175, 210, 0.65);
+  cursor: pointer;
+  list-style: none;
+  padding-left: 2px;
+}
+
+.tool-args-details summary::-webkit-details-marker { display: none; }
+
+.tool-args-pre {
+  margin: 4px 0 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  background: rgba(10, 20, 30, 0.55);
+  border-radius: 6px;
+  color: rgba(160, 200, 230, 0.75);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 @keyframes pulse-glow {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }

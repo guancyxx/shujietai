@@ -373,6 +373,9 @@ const roleLabelMap = {
 const dispatchEventLabelMap = {
   content_delta: 'AI 正在返回内容',
   tool_call: 'AI 正在调用工具',
+  tool_start: 'AI 正在调用工具',
+  tool_complete: '工具调用完成',
+  agent_thinking: 'AI 思考中…',
   await_input: 'AI 等待你补充信息',
   completed: '任务已完成',
   error: '任务执行异常',
@@ -1605,7 +1608,7 @@ async function sendMessageToHermes() {
       clearActiveTask()
       if (!wsConnected.value) wsConnect()
       await createDispatchTask({
-        aiPlatform: 'hermes',
+        aiPlatform: 'hermes-runs',
         initialPrompt: trimmed,
         model: selectedModel.value || '',
         skills: [...selectedSkills.value],
@@ -1800,14 +1803,50 @@ onUnmounted(() => {
               v-for="message in displayMessages"
               :key="message.id"
               class="timeline-item"
-              :class="[messageSideClass(message.role), message.role === 'assistant' ? 'msg-assistant' : '', message.meta_json?.streaming ? 'streaming' : '']"
+              :class="[
+                messageSideClass(message.role),
+                message.meta_json?.thinking ? 'msg-thinking' : '',
+                message.meta_json?.tool_call ? 'msg-tool' : '',
+                message.meta_json?.streaming ? 'streaming' : '',
+              ]"
             >
-              <div class="role-chip" :class="roleClass(message.role)">{{ roleLabelMap[message.role] || message.role }}</div>
-              <div class="timeline-meta">
-                {{ new Date(message.created_at).toLocaleString() }}
-                <span v-if="message.meta_json?.streaming" class="streaming-indicator">生成中…</span>
-              </div>
-              <div class="timeline-content" v-html="message.role === 'assistant' ? renderMarkdown(message.content) : message.content"></div>
+              <!-- Thinking bubble (collapsible) -->
+              <template v-if="message.meta_json?.thinking">
+                <details class="thinking-bubble">
+                  <summary class="thinking-summary">
+                    <span class="thinking-icon">🧠</span> 思考过程
+                    <span class="thinking-chars">{{ message.content.length }} 字符</span>
+                  </summary>
+                  <pre class="thinking-content">{{ message.content }}</pre>
+                </details>
+              </template>
+
+              <!-- Tool call bubble -->
+              <template v-else-if="message.meta_json?.tool_call">
+                <div class="tool-bubble" :class="message.meta_json?.completed ? 'tool-done' : 'tool-running'">
+                  <div class="tool-header">
+                    <span class="tool-status-icon">{{ message.meta_json?.tool_error ? '❌' : message.meta_json?.completed ? '✅' : '⚙️' }}</span>
+                    <span class="tool-name">{{ message.content }}</span>
+                    <span v-if="message.meta_json?.completed && message.meta_json?.duration_ms != null" class="tool-duration">{{ message.meta_json.duration_ms }}ms</span>
+                    <span v-else-if="!message.meta_json?.completed" class="tool-spinning">…</span>
+                  </div>
+                  <div v-if="message.meta_json?.tool_error" class="tool-error-text">{{ message.meta_json.tool_error }}</div>
+                  <details v-if="message.meta_json?.function_args" class="tool-args-details">
+                    <summary>参数</summary>
+                    <pre class="tool-args-pre">{{ message.meta_json.function_args }}</pre>
+                  </details>
+                </div>
+              </template>
+
+              <!-- Normal message -->
+              <template v-else>
+                <div class="role-chip" :class="roleClass(message.role)">{{ roleLabelMap[message.role] || message.role }}</div>
+                <div class="timeline-meta">
+                  {{ new Date(message.created_at).toLocaleString() }}
+                  <span v-if="message.meta_json?.streaming" class="streaming-indicator">生成中…</span>
+                </div>
+                <div class="timeline-content" v-html="message.role === 'assistant' ? renderMarkdown(message.content) : message.content"></div>
+              </template>
             </div>
           </div>
 

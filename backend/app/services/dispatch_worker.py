@@ -187,7 +187,7 @@ class TaskWorker:
 
             chunk_type = chunk.get("type")
 
-            if chunk_type == "content":
+            if chunk_type in ("content", "content_delta"):
                 content_piece = chunk["content"]
                 full_content += content_piece
                 await self._emit_event(
@@ -269,6 +269,75 @@ class TaskWorker:
                     event_name="task.progress.finish",
                     status=self._task.status,
                 )
+
+            elif chunk_type == "tool_start":
+                # Emitted by HermesRunsConnector when a tool invocation begins.
+                tool_name = chunk.get("tool", "tool")
+                tool_preview = chunk.get("preview") or ""
+                tool_call_id = f"run_tool_{tool_name}_{id(chunk)}"
+                self._tool_calls_in_flight[tool_call_id] = {
+                    "function_name": tool_name,
+                    "function_args": tool_preview,
+                    "index": len(self._tool_calls_in_flight),
+                    "id": tool_call_id,
+                    "started_at": __import__("time").monotonic(),
+                }
+                await self._emit_event(
+                    "tool_call",
+                    {
+                        "tool_call_id": tool_call_id,
+                        "function_name": tool_name,
+                        "preview": tool_preview,
+                    },
+                    event_name="tool.call.started",
+                    status=self._task.status,
+                    tool_call_id=tool_call_id,
+                )
+
+            elif chunk_type == "tool_complete":
+                # Match the in-flight record by tool name (best-effort; runs
+                # connector does not have stable opaque IDs across start/complete).
+                tool_name = chunk.get("tool", "")
+                matched_id: str | None = None
+                for tid, state in self._tool_calls_in_flight.items():
+                    if state.get("function_name") == tool_name:
+                        matched_id = tid
+                        break
+                if matched_id is None:
+                    # Fallback: create a synthetic completed record.
+                    matched_id = f"run_tool_{tool_name}_complete"
+
+                duration = chunk.get("duration")
+                is_error = bool(chunk.get("error", False))
+                started = (self._tool_calls_in_flight.get(matched_id) or {}).get("started_at")
+                if duration is None and started is not None:
+                    import time
+                    duration = round(time.monotonic() - started, 3)
+
+                self._tool_calls_in_flight.pop(matched_id, None)
+                await self._emit_event(
+                    "tool_call",
+                    {
+                        "tool_call_id": matched_id,
+                        "function_name": tool_name,
+                        "duration": duration,
+                        "error": is_error,
+                    },
+                    event_name="tool.call.completed",
+                    status=self._task.status,
+                    tool_call_id=matched_id,
+                )
+
+            elif chunk_type == "agent_thinking":
+                # Reasoning text from extended-thinking models.
+                thinking_text = chunk.get("text", "")
+                if thinking_text:
+                    await self._emit_event(
+                        "agent_thinking",
+                        {"text": thinking_text},
+                        event_name="agent.thinking",
+                        status=self._task.status,
+                    )
 
             elif chunk_type == "error":
                 raise RuntimeError(chunk.get("error", "unknown_connector_error"))
