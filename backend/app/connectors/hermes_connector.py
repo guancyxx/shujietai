@@ -1,7 +1,6 @@
-"""Hermes Agent runs connector — uses /v1/runs + /v1/runs/{run_id}/events SSE.
+"""Hermes Agent connector — uses /v1/runs + /v1/runs/{run_id}/events SSE.
 
-Compared to HermesStreamingConnector (OpenAI-compatible /chat/completions),
-this connector exposes richer structured lifecycle events:
+Exposes structured lifecycle events from Hermes runs API:
 
   content_delta   — streaming text chunk
   tool_start      — tool invocation began  (tool name + preview)
@@ -9,11 +8,6 @@ this connector exposes richer structured lifecycle events:
   agent_thinking  — reasoning text (only for extended-thinking-capable models)
   finish          — run completed successfully
   error           — run failed or cancelled
-
-The connector satisfies the StreamingAIConnector protocol so it can be dropped
-into the existing registry and picked up by TaskWorker without changes to the
-dispatch orchestration layer — TaskWorker only needs to handle the three new
-chunk types (tool_start, tool_complete, agent_thinking).
 """
 
 from __future__ import annotations
@@ -35,7 +29,7 @@ _POST_TIMEOUT = 30.0
 _STREAM_IDLE_TIMEOUT = 90.0
 
 
-class HermesRunsConnector:
+class HermesConnector:
     """Hermes-native agent runs connector.
 
     Uses POST /v1/runs to start a run then GET /v1/runs/{run_id}/events to
@@ -45,7 +39,7 @@ class HermesRunsConnector:
     callers choose which flavour they want via ``ai_platform`` on the task.
     """
 
-    platform_name = "hermes-runs"
+    platform_name = "hermes"
 
     def _env(self) -> tuple[str, str, float]:
         """Return (base_url, api_key, timeout_seconds) from env."""
@@ -218,4 +212,4 @@ class HermesRunsConnector:
 
 
 # Satisfy the StreamingAIConnector protocol at import time.
-assert isinstance(HermesRunsConnector(), StreamingAIConnector)
+assert isinstance(HermesConnector(), StreamingAIConnector)

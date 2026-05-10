@@ -30,6 +30,10 @@ class GitHubProjectService:
 
         if result.returncode != 0:
             if command and command[0] == "gh":
+                # gh exits with code 4 for auth issues; stderr contains "gh auth login"
+                stderr_lower = (result.stderr or "").lower()
+                if result.returncode == 4 or "gh auth login" in stderr_lower or "GH_TOKEN" in stderr_lower:
+                    raise RuntimeError("gh_auth_required")
                 raise RuntimeError("gh_command_failed")
             if command and command[0] == "git":
                 raise RuntimeError("git_command_failed")
