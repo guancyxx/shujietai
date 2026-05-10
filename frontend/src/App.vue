@@ -135,6 +135,10 @@ const skillsCatalogCategoryFilter = ref('全部')
 const skillsCatalogProviderFilter = ref('hermes')
 const skillsCatalogTypeFilter = ref('全部')
 const skillDetailTarget = ref(null)
+const skillDetailContent = ref('')
+const skillDetailContentLoading = ref(false)
+const skillsCatalogPage = ref(1)
+const skillsCatalogPageSize = 30
 
 const skillsCatalogProviders = computed(() => {
   if (!skillsCatalog.value) return [{ id: 'hermes', label: 'Hermes Agent' }]
@@ -167,11 +171,33 @@ const filteredCatalogSkills = computed(() => {
     .map((s) => ({ ...s, provider_id: provider.id, provider_label: provider.label }))
 })
 
-function openSkillDetail(skill) {
+const skillsCatalogTotalPages = computed(() => Math.max(1, Math.ceil(filteredCatalogSkills.value.length / skillsCatalogPageSize)))
+const pagedCatalogSkills = computed(() => {
+  const start = (skillsCatalogPage.value - 1) * skillsCatalogPageSize
+  return filteredCatalogSkills.value.slice(start, start + skillsCatalogPageSize)
+})
+
+// Reset to page 1 when filters change
+watch([skillsCatalogSearch, skillsCatalogCategoryFilter, skillsCatalogTypeFilter, skillsCatalogProviderFilter], () => {
+  skillsCatalogPage.value = 1
+})
+
+async function openSkillDetail(skill) {
   skillDetailTarget.value = skill
+  skillDetailContent.value = ''
+  skillDetailContentLoading.value = true
+  try {
+    const res = await fetch(`${apiBase}/api/v1/skills/${encodeURIComponent(skill.name)}/content`)
+    if (res.ok) {
+      const data = await res.json()
+      skillDetailContent.value = data.content || ''
+    }
+  } catch (_) {}
+  skillDetailContentLoading.value = false
 }
 function closeSkillDetail() {
   skillDetailTarget.value = null
+  skillDetailContent.value = ''
 }
 
 async function loadSkillsCatalog() {
@@ -2100,10 +2126,10 @@ onUnmounted(() => {
           <div v-if="skillsCatalogError" class="skills-catalog-error muted">{{ skillsCatalogError }}</div>
           <div v-else-if="skillsCatalogLoading" class="skills-catalog-loading muted">加载中...</div>
           <template v-else>
-            <div class="skills-catalog-meta muted">共 {{ filteredCatalogSkills.length }} 个 skills</div>
+            <div class="skills-catalog-meta muted">共 {{ filteredCatalogSkills.length }} 个 skills，第 {{ skillsCatalogPage }}/{{ skillsCatalogTotalPages }} 页</div>
             <div class="skills-catalog-list scrollbar-themed">
               <div
-                v-for="skill in filteredCatalogSkills"
+                v-for="skill in pagedCatalogSkills"
                 :key="skill.provider_id + '/' + skill.name"
                 class="skill-card"
                 @click="openSkillDetail(skill)"
@@ -2118,6 +2144,11 @@ onUnmounted(() => {
                 <div class="skill-card-desc">{{ skill.description || '暂无描述' }}</div>
               </div>
               <div v-if="filteredCatalogSkills.length === 0" class="muted">无匹配 skills</div>
+            </div>
+            <div v-if="skillsCatalogTotalPages > 1" class="skills-catalog-pagination">
+              <button class="picker-btn ghost" :disabled="skillsCatalogPage <= 1" @click="skillsCatalogPage--">上一页</button>
+              <span class="muted">{{ skillsCatalogPage }} / {{ skillsCatalogTotalPages }}</span>
+              <button class="picker-btn ghost" :disabled="skillsCatalogPage >= skillsCatalogTotalPages" @click="skillsCatalogPage++">下一页</button>
             </div>
           </template>
         </article>
@@ -2136,6 +2167,9 @@ onUnmounted(() => {
           <span class="skill-category-badge">{{ skillDetailTarget.category }}</span>
         </div>
         <div class="skill-detail-desc">{{ skillDetailTarget.description || '暂无描述' }}</div>
+        <div v-if="skillDetailContentLoading" class="muted skill-detail-content-loading">加载内容中...</div>
+        <pre v-else-if="skillDetailContent" class="skill-detail-content scrollbar-themed">{{ skillDetailContent }}</pre>
+        <div v-else class="muted skill-detail-content-empty">暂无详细内容</div>
       </div>
     </div>
 
