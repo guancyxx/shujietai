@@ -385,21 +385,24 @@ const dispatchMessages = computed(() => {
         if (evt.event_name === 'tool.call.completed') {
           toolState.completed = true
           toolState.updatedAt = evt.created_at
+          toolState.durationMs = payload.duration_ms ?? null
+          toolState.toolError = payload.error ?? null
           const finalArgs = payload.function_args || toolState.args
           if (typeof finalArgs === 'string') {
             toolState.args = finalArgs
           }
         }
 
+        const displayName = toolState.message.meta_json.function_name || functionName
         toolState.message.meta_json = {
           ...(toolState.message.meta_json || {}),
           function_args: toolState.args,
           updated_at: toolState.updatedAt,
           completed: !!toolState.completed,
+          duration_ms: toolState.durationMs ?? null,
+          tool_error: toolState.toolError ?? null,
         }
-        toolState.message.content = toolState.completed
-          ? `✅ Tool completed: **${toolState.message.meta_json.function_name || functionName}**`
-          : `🔧 Calling: **${toolState.message.meta_json.function_name || functionName}**`
+        toolState.message.content = displayName
       }
     } else if (evt.event_type === 'agent_thinking') {
       // Reasoning / thinking text from extended-thinking models or runs connector
