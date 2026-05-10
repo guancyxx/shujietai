@@ -233,7 +233,8 @@ def _extract_skill_description(skill_file: Path) -> str:
 def _source_to_skill_type(source: str) -> str:
     """Map hermes skills list source column value to a skill_type label."""
     s = (source or "").strip().lower()
-    if s in ("personal-skills", "personal_skills", "custom"):
+    # "local" means the skill lives in personal-skills / external_dirs — treat as custom
+    if s in ("personal-skills", "personal_skills", "custom", "local"):
         return "custom"
     if s in ("builtin", "skills", ""):
         return "builtin"
@@ -464,13 +465,17 @@ def build_runtime_state() -> RuntimeState:
     cli_skill_items = _collect_skill_items_from_hermes_cli()
     fs_skill_items = _collect_skill_items_from_filesystem()
     fs_desc_map = {item.name: item.description for item in fs_skill_items if item.description}
+    # Filesystem scan is the authoritative source for skill_type (personal-skills = custom).
+    # CLI source column may say "local" which we now map to "custom", but FS is still ground truth.
+    fs_type_map = {item.name: item.skill_type for item in fs_skill_items}
 
     merged_skill_map: dict[str, RuntimeSkillItem] = {}
     for item in cli_skill_items:
         merged_skill_map[item.name] = RuntimeSkillItem(
             name=item.name,
             description=fs_desc_map.get(item.name, item.description),
-            skill_type=item.skill_type,
+            # Prefer filesystem-derived skill_type when available
+            skill_type=fs_type_map.get(item.name, item.skill_type),
         )
     for item in fs_skill_items:
         if item.name not in merged_skill_map:

@@ -1,8 +1,8 @@
 from __future__ import annotations
-
 import asyncio
 import json as json_module
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
 from uuid import uuid4
@@ -622,6 +622,33 @@ def get_skills_catalog():
         ],
         "total": len(hermes_skills),
     }
+
+
+@app.get("/api/v1/skills/{skill_name:path}/content")
+def get_skill_content(skill_name: str):
+    """Return the raw SKILL.md content for a given skill name (e.g. 'devops/kanban-worker')."""
+    skills_dir = Path(os.getenv("HERMES_SKILLS_DIR", "/home/guancy/.hermes/skills"))
+    personal_dir = Path(os.getenv("HERMES_PERSONAL_SKILLS_DIR", "/home/guancy/.hermes/personal-skills"))
+
+    # Search personal first, then builtin
+    for base_dir in (personal_dir, skills_dir):
+        if not base_dir.exists():
+            continue
+        # skill_name may be "category/name" — look for SKILL.md two levels deep
+        parts = skill_name.split("/", 1)
+        candidates = []
+        if len(parts) == 2:
+            candidates.append(base_dir / parts[0] / parts[1] / "SKILL.md")
+        candidates.append(base_dir / skill_name / "SKILL.md")
+        for candidate in candidates:
+            if candidate.is_file():
+                try:
+                    content = candidate.read_text(encoding="utf-8")
+                    return {"name": skill_name, "content": content, "path": str(candidate)}
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
+
+    raise HTTPException(status_code=404, detail=f"SKILL.md not found for: {skill_name}")
 
 
 @app.put("/api/v1/runtime/preferences")
