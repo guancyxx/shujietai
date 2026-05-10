@@ -590,6 +590,39 @@ def get_runtime_catalog(platform: str = Query(default="hermes")):
     return runtime_dict
 
 
+@app.get("/api/v1/skills")
+def get_skills_catalog():
+    """Return all available skills grouped by provider.
+
+    Hermes is currently the only provider. The response shape uses a providers[]
+    envelope so future providers can be added without breaking clients.
+    """
+    runtime = build_runtime_state()
+    skill_items = runtime.available_skill_items
+
+    hermes_skills = []
+    for item in skill_items:
+        name = item.name
+        # category = first path segment (e.g. "devops" from "devops/kanban-worker")
+        category = name.split("/")[0] if "/" in name else "general"
+        hermes_skills.append({
+            "name": name,
+            "description": item.description,
+            "category": category,
+        })
+
+    return {
+        "providers": [
+            {
+                "id": "hermes",
+                "label": "Hermes Agent",
+                "skills": hermes_skills,
+            }
+        ],
+        "total": len(hermes_skills),
+    }
+
+
 @app.put("/api/v1/runtime/preferences")
 def update_runtime_preferences(payload: RuntimePreferenceUpdateRequest):
     set_runtime_preferences(

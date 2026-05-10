@@ -106,6 +106,65 @@ async function switchToDispatchHistory() {
   await refreshDispatchHistory()
 }
 
+// Skills catalog state
+const skillsCatalog = ref(null)
+const skillsCatalogLoading = ref(false)
+const skillsCatalogError = ref('')
+const skillsCatalogSearch = ref('')
+const skillsCatalogCategoryFilter = ref('全部')
+const skillsCatalogProviderFilter = ref('hermes')
+
+const skillsCatalogProviders = computed(() => {
+  if (!skillsCatalog.value) return [{ id: 'hermes', label: 'Hermes Agent' }]
+  return skillsCatalog.value.providers.map((p) => ({ id: p.id, label: p.label }))
+})
+
+const skillsCatalogCategories = computed(() => {
+  if (!skillsCatalog.value) return []
+  const provider = skillsCatalog.value.providers.find((p) => p.id === skillsCatalogProviderFilter.value)
+  if (!provider) return []
+  const cats = new Set(provider.skills.map((s) => s.category))
+  return Array.from(cats).sort()
+})
+
+const filteredCatalogSkills = computed(() => {
+  if (!skillsCatalog.value) return []
+  const provider = skillsCatalog.value.providers.find((p) => p.id === skillsCatalogProviderFilter.value)
+  if (!provider) return []
+  const keyword = skillsCatalogSearch.value.trim().toLowerCase()
+  const catFilter = skillsCatalogCategoryFilter.value
+  return provider.skills
+    .filter((s) => {
+      const catOk = catFilter === '全部' || s.category === catFilter
+      if (!catOk) return false
+      if (!keyword) return true
+      return s.name.toLowerCase().includes(keyword) || (s.description || '').toLowerCase().includes(keyword)
+    })
+    .map((s) => ({ ...s, provider_id: provider.id, provider_label: provider.label }))
+})
+
+async function loadSkillsCatalog() {
+  skillsCatalogLoading.value = true
+  skillsCatalogError.value = ''
+  try {
+    const data = await fetchJson(`${apiBase}/api/v1/skills`)
+    skillsCatalog.value = data
+    // reset category filter when provider changes
+    skillsCatalogCategoryFilter.value = '全部'
+  } catch (e) {
+    skillsCatalogError.value = e?.message || 'Failed to load skills'
+  } finally {
+    skillsCatalogLoading.value = false
+  }
+}
+
+async function switchToSkillsCatalog() {
+  activePage.value = 'skills-catalog'
+  if (!skillsCatalog.value) {
+    await loadSkillsCatalog()
+  }
+}
+
 async function refreshDispatchHistory() {
   await fetchTaskHistory(dispatchHistoryStatusFilter.value)
 }
@@ -1589,6 +1648,10 @@ onUnmounted(() => {
             <span class="top-nav-btn-icon" aria-hidden="true">🤖</span>
             <span class="top-nav-btn-label">模型配置</span>
           </button>
+          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'skills-catalog' }" @click="switchToSkillsCatalog">
+            <span class="top-nav-btn-icon" aria-hidden="true">🧩</span>
+            <span class="top-nav-btn-label">Skills 库</span>
+          </button>
           <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'system-config' }" @click="activePage = 'system-config'">
             <span class="top-nav-btn-icon" aria-hidden="true">⚙️</span>
             <span class="top-nav-btn-label">系统配置</span>
@@ -1972,6 +2035,47 @@ onUnmounted(() => {
                 <button v-if="dispatchDetailTask.status === 'awaiting_input' || dispatchDetailTask.status === 'paused'" type="button" class="picker-btn" @click="resumeFromHistory(dispatchDetailTask)">恢复任务</button>
                 <button v-if="['queued','running','awaiting_input'].includes(dispatchDetailTask.status)" type="button" class="picker-btn picker-btn-danger" @click="cancelFromHistory(dispatchDetailTask)">取消任务</button>
               </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section v-else-if="activePage === 'skills-catalog'" class="main-grid skills-catalog-grid">
+        <article class="panel skills-catalog-panel">
+          <div class="skills-catalog-header">
+            <h2>Skills 库</h2>
+            <div class="skills-catalog-controls">
+              <select v-model="skillsCatalogProviderFilter" class="dispatch-filter-select">
+                <option v-for="p in skillsCatalogProviders" :key="p.id" :value="p.id">{{ p.label }}</option>
+              </select>
+              <select v-model="skillsCatalogCategoryFilter" class="dispatch-filter-select">
+                <option value="全部">全部分类</option>
+                <option v-for="cat in skillsCatalogCategories" :key="cat" :value="cat">{{ cat }}</option>
+              </select>
+              <input v-model="skillsCatalogSearch" class="picker-search-input skills-catalog-search" placeholder="搜索 skill 名称或描述" />
+              <button type="button" class="picker-btn ghost" @click="loadSkillsCatalog" :disabled="skillsCatalogLoading">
+                {{ skillsCatalogLoading ? '加载中...' : '刷新' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="skillsCatalogError" class="skills-catalog-error muted">{{ skillsCatalogError }}</div>
+          <div v-else-if="skillsCatalogLoading" class="skills-catalog-loading muted">加载中...</div>
+          <div v-else>
+            <div class="skills-catalog-meta muted">共 {{ filteredCatalogSkills.length }} 个 skills</div>
+            <div class="skills-catalog-list">
+              <div
+                v-for="skill in filteredCatalogSkills"
+                :key="skill.provider_id + '/' + skill.name"
+                class="skill-card"
+              >
+                <div class="skill-card-top">
+                  <span class="skill-card-name">{{ skill.name }}</span>
+                  <span class="skill-category-badge">{{ skill.category }}</span>
+                </div>
+                <div class="skill-card-desc">{{ skill.description || '-' }}</div>
+              </div>
+              <div v-if="filteredCatalogSkills.length === 0" class="muted">无匹配 skills</div>
             </div>
           </div>
         </article>
