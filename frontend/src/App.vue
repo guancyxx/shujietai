@@ -442,8 +442,9 @@ function renderMarkdown(text) {
 
 // Merged timeline: historical messages + dispatch messages (via WebSocket) + streaming assistant message
 const displayMessages = computed(() => {
-  // If there is an active dispatch task, show dispatch messages instead of legacy session messages
-  if (dispatchTaskId.value && dispatchMessages.value.length > 0) {
+  // If there is an active dispatch task, always show dispatch messages view
+  // (even while loading — avoids showing stale timeline "已提交..." placeholder)
+  if (dispatchTaskId.value) {
     return dispatchMessages.value
   }
   const msgs = [...(timeline.value.messages || [])]
@@ -902,7 +903,12 @@ async function persistRuntimePreferences() {
 
 async function loadSessions() {
   const data = await fetchJson(`${apiBase}/api/v1/sessions`)
-  sessions.value = data
+  // Sort by updated_at descending (most recently active first)
+  sessions.value = [...data].sort((a, b) => {
+    const ta = a.updated_at || a.created_at || ''
+    const tb = b.updated_at || b.created_at || ''
+    return tb.localeCompare(ta)
+  })
   if (!selectedSessionId.value && data.length > 0) {
     selectedSessionId.value = data[0].id
     selectedExternalSessionId.value = data[0].external_session_id
@@ -1798,7 +1804,8 @@ onUnmounted(() => {
           </div>
 
           <div class="timeline-scroll" ref="timelineScrollRef" @scroll="onTimelineScroll">
-            <div v-if="displayMessages.length === 0" class="muted">暂无消息</div>
+            <div v-if="displayMessages.length === 0 && dispatchTaskId" class="muted">⏳ 正在恢复任务进度，接入实时数据流中...</div>
+            <div v-else-if="displayMessages.length === 0" class="muted">暂无消息</div>
             <div
               v-for="message in displayMessages"
               :key="message.id"
