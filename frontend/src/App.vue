@@ -238,11 +238,19 @@ async function viewDispatchTaskDetail(task) {
 }
 
 async function resumeFromHistory(task) {
-  // Set as active task in the dispatch composable and switch to chat page
-  activeTaskId.value = task.id
-  activeTask.value = task
   dispatchDetailTask.value = null
   activePage.value = 'chat'
+
+  const externalSessionId = task?.external_session_id || `dispatch_${task?.id || ''}`
+  const matchedSession = sessions.value.find((item) => item.external_session_id === externalSessionId)
+  if (matchedSession) {
+    selectedSessionId.value = matchedSession.id
+    selectedExternalSessionId.value = matchedSession.external_session_id
+  } else {
+    selectedExternalSessionId.value = externalSessionId
+  }
+
+  await restoreActiveDispatchTask()
 }
 
 async function cancelFromHistory(task) {
@@ -1036,7 +1044,6 @@ async function refreshData() {
   try {
     await Promise.all([loadSessions(), loadProjects(), loadTaskBoardItems(), loadGithubRepos(), loadSystemConfig()])
     await loadSessionData()
-    // Restore active dispatch task if the selected session has an associated running dispatch
     await restoreActiveDispatchTask()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
@@ -1045,31 +1052,40 @@ async function refreshData() {
   }
 }
 
-// On page refresh, re-attach to a running/awaiting dispatch task associated with the current session
-async function restoreActiveDispatchTask() {
-  if (!selectedExternalSessionId.value) return
-
-  // external_session_id format: "dispatch_{task_id}" — extract the dispatch task ID
+function getDispatchTaskIdFromExternalSessionId(externalSessionId) {
+  const normalized = String(externalSessionId || '').trim()
   const dispatchPrefix = 'dispatch_'
-  if (!selectedExternalSessionId.value.startsWith(dispatchPrefix)) return
+  if (!normalized.startsWith(dispatchPrefix)) {
+    return ''
+  }
+  return normalized.slice(dispatchPrefix.length)
+}
 
-  const taskId = selectedExternalSessionId.value.slice(dispatchPrefix.length)
-  if (!taskId) return
+// Re-attach to the dispatch task associated with the selected session.
+// This runs on initial page refresh and on later session switches.
+async function restoreActiveDispatchTask() {
+  const taskId = getDispatchTaskIdFromExternalSessionId(selectedExternalSessionId.value)
+  if (!taskId) {
+    clearActiveTask()
+    return
+  }
+
+  clearActiveTask()
 
   try {
-    // Fetch current task state from backend
     const task = await fetchJson(`${apiBase}/api/v1/dispatch/${taskId}`)
-    if (!task) return
+    if (!task) {
+      return
+    }
 
-    // Set as active task in the composable (always — even for terminal tasks, to show history)
-    activeTaskId.value = task.id
-    activeTask.value = task
+    // Keep the dispatch view active even for terminal tasks so historical execution is visible.
+    dispatchTaskId.value = task.id
+    dispatchActiveTask.value = task
 
     const nonTerminalStatuses = ['queued', 'running', 'awaiting_input', 'paused']
     const isLive = nonTerminalStatuses.includes(task.status)
 
     if (isLive) {
-      // Register WebSocket event listeners only for live tasks
       on('status', handleTaskStatus)
       on('content_delta', handleTaskEvent)
       on('tool_call', handleTaskEvent)
@@ -1078,21 +1094,15 @@ async function restoreActiveDispatchTask() {
       on('error', handleTaskEvent)
       on('cancelled', handleTaskEvent)
 
-      // Subscribe to task events via WebSocket
-      if (connected.value) {
-        subscribe(task.id)
-      } else {
+      if (!wsConnected.value) {
         wsConnect()
-        await new Promise(resolve => setTimeout(resolve, 500))
-        if (connected.value) subscribe(task.id)
       }
+      subscribe(task.id)
     }
 
-    // Load existing events from REST (always — shows full execution history)
-    // Use a large limit to fetch all events in one request (backend default is 200)
     const eventsData = await fetchJson(`${apiBase}/api/v1/dispatch/${task.id}/events?limit=2000`)
     const items = eventsData.items || eventsData || []
-    taskEvents.value = items.map(evt => ({
+    dispatchTaskEvents.value = items.map((evt) => ({
       id: evt.id,
       event_type: evt.event_type,
       event_name: evt.event_name || evt.event_type || '',
@@ -1103,14 +1113,15 @@ async function restoreActiveDispatchTask() {
       payload: evt.payload,
       created_at: evt.created_at || new Date().toISOString(),
     }))
-    taskEvents.value.sort((a, b) => {
+    dispatchTaskEvents.value.sort((a, b) => {
       const seqA = Number.isFinite(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
       const seqB = Number.isFinite(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
       if (seqA !== seqB) return seqA - seqB
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     })
-  } catch {
-    // If restore fails, the session timeline is still loaded — user sees historical messages
+  } catch (error) {
+    console.warn('Failed to restore dispatch task after session reload', error)
+    clearActiveTask()
   }
 }
 
@@ -1720,11 +1731,13 @@ watch(selectedSessionId, async () => {
   if (!selectedSessionId.value) {
     timeline.value = { messages: [], events: [] }
     cockpit.value = null
+    clearActiveTask()
     return
   }
   try {
     errorMessage.value = ''
     await loadSessionData()
+    await restoreActiveDispatchTask()
     scrollToBottom(true)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
@@ -1755,10 +1768,10 @@ watch(activePage, async (page) => {
   }
 })
 
-onMounted(() => {
-  refreshData()
+onMounted(async () => {
   // Initialize WebSocket connection for dispatch orchestration (ADR-0004)
   wsConnect()
+  await refreshData()
 })
 
 // Cleanup active dispatch task on unmount

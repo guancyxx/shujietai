@@ -10,11 +10,37 @@ const socket = ref(null)
 const connected = ref(false)
 const connectionError = ref('')
 const listeners = new Map() // event_type -> Set<callback>
+const subscribedTaskIds = new Set()
+const pendingMessages = []
 
 let reconnectTimer = null
 let reconnectAttempts = 0
 const MAX_RECONNECT_ATTEMPTS = 10
 const RECONNECT_BASE_MS = 1000
+
+function sendRaw(data) {
+  if (socket.value && socket.value.readyState === WebSocket.OPEN) {
+    socket.value.send(JSON.stringify(data))
+    return true
+  }
+  return false
+}
+
+function flushPendingMessages() {
+  while (pendingMessages.length > 0) {
+    const next = pendingMessages.shift()
+    if (!sendRaw(next)) {
+      pendingMessages.unshift(next)
+      break
+    }
+  }
+}
+
+function replaySubscriptions() {
+  for (const taskId of subscribedTaskIds) {
+    sendRaw({ action: 'subscribe_task', task_id: taskId })
+  }
+}
 
 function connect() {
   if (socket.value && (socket.value.readyState === WebSocket.OPEN || socket.value.readyState === WebSocket.CONNECTING)) {
@@ -28,6 +54,8 @@ function connect() {
     connected.value = true
     connectionError.value = ''
     reconnectAttempts = 0
+    replaySubscriptions()
+    flushPendingMessages()
   }
 
   ws.onclose = () => {
@@ -89,17 +117,23 @@ function disconnect() {
 }
 
 function send(data) {
-  if (socket.value && socket.value.readyState === WebSocket.OPEN) {
-    socket.value.send(JSON.stringify(data))
+  if (sendRaw(data)) {
+    return true
   }
+  pendingMessages.push(data)
+  return false
 }
 
 function subscribe(taskId) {
-  send({ action: 'subscribe_task', task_id: taskId })
+  if (!taskId) return false
+  subscribedTaskIds.add(taskId)
+  return sendRaw({ action: 'subscribe_task', task_id: taskId })
 }
 
 function unsubscribe(taskId) {
-  send({ action: 'unsubscribe_task', task_id: taskId })
+  if (!taskId) return false
+  subscribedTaskIds.delete(taskId)
+  return sendRaw({ action: 'unsubscribe_task', task_id: taskId })
 }
 
 function on(eventType, callback) {
