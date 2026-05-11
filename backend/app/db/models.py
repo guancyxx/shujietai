@@ -96,6 +96,7 @@ class TaskBoardEntity(Base):
     upstream_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     parent_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

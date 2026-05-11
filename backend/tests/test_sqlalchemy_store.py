@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from app.schemas import IngestEventRequest, ProjectCreateRequest, TaskBoardCreateRequest, TaskBoardUpdateRequest
 
 
@@ -32,6 +34,83 @@ def test_sqlalchemy_store_ingest_and_query_roundtrip() -> None:
 
     history = store.get_history_messages("hermes", "sql_sess_1")
     assert history == [{"role": "user", "content": "hello"}]
+
+
+def test_sqlalchemy_store_list_sessions_orders_by_recent_activity_desc_and_exposes_timestamps() -> None:
+    from app.services.sqlalchemy_store import SqlAlchemySessionStore
+
+    store = SqlAlchemySessionStore("sqlite+pysqlite:///:memory:")
+    base = datetime(2026, 5, 11, 9, 0, tzinfo=UTC)
+    ticks = iter(
+        [
+            base,
+            base,
+            base,
+            base + timedelta(minutes=1),
+            base + timedelta(minutes=2),
+            base + timedelta(minutes=3),
+            base + timedelta(minutes=10),
+            base + timedelta(minutes=10),
+            base + timedelta(minutes=10),
+            base + timedelta(minutes=11),
+            base + timedelta(minutes=12),
+            base + timedelta(minutes=13),
+            base + timedelta(minutes=20),
+            base + timedelta(minutes=21),
+            base + timedelta(minutes=22),
+        ]
+    )
+    store.now = lambda: next(ticks)
+
+    older_payload = IngestEventRequest(
+        platform="hermes",
+        event_id="evt_sql_order_1",
+        event_type="message_created",
+        external_session_id="sql_old",
+        title="Older Session",
+        payload_json={"source": "test"},
+        message={"role": "user", "content": "hello old"},
+    )
+    newer_payload = IngestEventRequest(
+        platform="hermes",
+        event_id="evt_sql_order_2",
+        event_type="message_created",
+        external_session_id="sql_new",
+        title="Newer Session",
+        payload_json={"source": "test"},
+        message={"role": "user", "content": "hello new"},
+    )
+    refresh_payload = IngestEventRequest(
+        platform="hermes",
+        event_id="evt_sql_order_3",
+        event_type="message_created",
+        external_session_id="sql_old",
+        title="Older Session",
+        payload_json={"source": "test"},
+        message={"role": "assistant", "content": "recent reply"},
+    )
+
+    older_session_id, older_duplicate = store.ingest(older_payload)
+    newer_session_id, newer_duplicate = store.ingest(newer_payload)
+    refreshed_session_id, refreshed_duplicate = store.ingest(refresh_payload)
+
+    assert older_duplicate is False
+    assert newer_duplicate is False
+    assert refreshed_duplicate is False
+    assert refreshed_session_id == older_session_id
+
+    sessions = store.list_sessions()
+    assert [session.external_session_id for session in sessions] == ["sql_old", "sql_new"]
+    assert sessions[0].updated_at > sessions[1].updated_at
+    assert sessions[0].created_at.replace(tzinfo=UTC) == base
+    assert sessions[0].updated_at.replace(tzinfo=UTC) > sessions[0].created_at.replace(tzinfo=UTC)
+    assert sessions[1].updated_at.replace(tzinfo=UTC) >= sessions[1].created_at.replace(tzinfo=UTC)
+    assert sessions[1].created_at.replace(tzinfo=UTC) >= sessions[0].created_at.replace(tzinfo=UTC)
+
+    detail = store.get_session(older_session_id)
+    assert detail is not None
+    assert detail.created_at.replace(tzinfo=UTC) == sessions[0].created_at.replace(tzinfo=UTC)
+    assert detail.updated_at.replace(tzinfo=UTC) == sessions[0].updated_at.replace(tzinfo=UTC)
 
 
 def test_sqlalchemy_store_project_roundtrip() -> None:

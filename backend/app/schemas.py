@@ -132,6 +132,7 @@ class TaskBoardCreateRequest(BaseModel):
     parent_task_id: UUID | None = None
     upstream_task_id: UUID | None = None
     status: TaskBoardStatus = "draft"
+    priority: int = Field(default=3, ge=1, le=4)
 
 
 class TaskBoardUpdateRequest(BaseModel):
@@ -142,6 +143,7 @@ class TaskBoardUpdateRequest(BaseModel):
     parent_task_id: UUID | None = None
     upstream_task_id: UUID | None = None
     status: TaskBoardStatus | None = None
+    priority: int | None = Field(default=None, ge=1, le=4)
 
 
 class TaskBoardItem(BaseModel):
@@ -158,6 +160,7 @@ class TaskBoardItem(BaseModel):
     parent_task_id: UUID | None = None
     parent_task_name: str | None = None
     status: TaskBoardStatus
+    priority: int = 3
     created_at: datetime
     updated_at: datetime
 
@@ -181,6 +184,8 @@ class SessionSummary(BaseModel):
     status: str
     started_at: datetime
     ended_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class SessionDetail(SessionSummary):

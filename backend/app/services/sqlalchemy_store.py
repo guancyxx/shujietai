@@ -181,8 +181,12 @@ class SqlAlchemySessionStore:
 
     def list_sessions(self) -> list[SessionSummary]:
         with self._session_factory() as db:
-            rows = db.execute(select(SessionEntity).order_by(SessionEntity.started_at.asc())).scalars().all()
-            return [
+            rows = db.execute(select(SessionEntity)).scalars().all()
+            metrics_by_session_id = {
+                metrics.session_id: metrics.updated_at
+                for metrics in db.execute(select(SessionMetricsEntity)).scalars().all()
+            }
+            summaries = [
                 SessionSummary(
                     id=row.id,
                     platform=row.platform,
@@ -191,15 +195,20 @@ class SqlAlchemySessionStore:
                     status=row.status,
                     started_at=row.started_at,
                     ended_at=row.ended_at,
+                    created_at=row.started_at,
+                    updated_at=metrics_by_session_id.get(row.id, row.started_at),
                 )
                 for row in rows
             ]
+            return sorted(summaries, key=lambda session: (session.updated_at, session.created_at), reverse=True)
 
     def get_session(self, session_id: str) -> SessionDetail | None:
         with self._session_factory() as db:
             row = db.get(SessionEntity, session_id)
             if row is None:
                 return None
+            metrics = db.get(SessionMetricsEntity, row.id)
+            updated_at = metrics.updated_at if metrics is not None else row.started_at
             return SessionDetail(
                 id=row.id,
                 platform=row.platform,
@@ -208,6 +217,8 @@ class SqlAlchemySessionStore:
                 status=row.status,
                 started_at=row.started_at,
                 ended_at=row.ended_at,
+                created_at=row.started_at,
+                updated_at=updated_at,
                 message_count=row.message_count,
                 task_count=row.task_count,
             )
@@ -426,7 +437,7 @@ class SqlAlchemySessionStore:
                 item_id = str(uuid4())
                 now = self.now()
                 entity = TaskBoardEntity(
-                    id=item_id,
+                    id=f"task_{uuid4().hex[:12]}",
                     name=payload.name.strip(),
                     description=payload.description.strip(),
                     ai_platform=(payload.ai_platform or "hermes").strip() or "hermes",
@@ -437,7 +448,7 @@ class SqlAlchemySessionStore:
                     created_at=now,
                     updated_at=now,
                 )
-                db.add(entity)
+
                 db.flush()
                 return self._build_task_board_item(db, entity)
 
@@ -456,6 +467,8 @@ class SqlAlchemySessionStore:
                     entity.ai_platform = payload.ai_platform.strip() or "hermes"
                 if payload.status is not None:
                     entity.status = payload.status
+                if payload.priority is not None:
+                    entity.priority = payload.priority
 
                 if "project_id" in payload.model_fields_set:
                     project_id = str(payload.project_id) if payload.project_id is not None else None

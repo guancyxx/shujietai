@@ -65,6 +65,7 @@ class SessionStore:
             return existing
 
         session_id = f"sess_{uuid4().hex[:12]}"
+        created_at = self._now()
         self._session_id_by_external[key] = session_id
         self._sessions[session_id] = SessionDetail(
             id=session_id,
@@ -72,7 +73,10 @@ class SessionStore:
             external_session_id=payload.external_session_id,
             title=payload.title or f"Session {payload.external_session_id}",
             status="active",
-            started_at=self._now(),
+            started_at=created_at,
+            ended_at=None,
+            created_at=created_at,
+            updated_at=created_at,
             message_count=0,
             task_count=0,
         )
@@ -144,6 +148,8 @@ class SessionStore:
 
     def _refresh_counts(self, session_id: str) -> None:
         session = self._sessions[session_id]
+        metrics = self._metrics.get(session_id)
+        updated_at = metrics.updated_at if metrics is not None else session.updated_at
         self._sessions[session_id] = SessionDetail(
             id=session.id,
             platform=session.platform,
@@ -152,11 +158,18 @@ class SessionStore:
             status=session.status,
             started_at=session.started_at,
             ended_at=session.ended_at,
+            created_at=session.created_at,
+            updated_at=updated_at,
             message_count=len(self._messages[session_id]),
             task_count=len(self._tasks[session_id]),
         )
 
     def list_sessions(self) -> list[SessionSummary]:
+        ordered_sessions = sorted(
+            self._sessions.values(),
+            key=lambda session: (session.updated_at, session.created_at),
+            reverse=True,
+        )
         return [
             SessionSummary(
                 id=s.id,
@@ -166,8 +179,10 @@ class SessionStore:
                 status=s.status,
                 started_at=s.started_at,
                 ended_at=s.ended_at,
+                created_at=s.created_at,
+                updated_at=s.updated_at,
             )
-            for s in self._sessions.values()
+            for s in ordered_sessions
         ]
 
     def get_session(self, session_id: str) -> SessionDetail | None:
