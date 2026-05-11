@@ -533,10 +533,18 @@ class SqlAlchemySessionStore:
         if session is None:
             return None
 
-        with self._session_factory() as db:
+        with self._session_factory.begin() as db:
             metrics_row = db.get(SessionMetricsEntity, session_id)
             if metrics_row is None:
-                return None
+                metrics_row = SessionMetricsEntity(
+                    session_id=session_id,
+                    token_in=0,
+                    token_out=0,
+                    latency_ms_p50=0,
+                    error_count=0,
+                    updated_at=self.now(),
+                )
+                db.add(metrics_row)
 
             task_rows = db.execute(
                 select(TaskEntity).where(TaskEntity.session_id == session_id).order_by(TaskEntity.updated_at.asc())
