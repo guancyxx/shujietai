@@ -1995,6 +1995,7 @@ onUnmounted(() => {
                   <span class="kanban-project-count muted">{{ Object.values(row.columns).reduce((n, arr) => n + arr.length, 0) }} 项</span>
                 </div>
                 <div v-if="!collapsedProjectRows.has(row.id)" class="kanban-row-columns">
+                  <div class="kanban-row-spacer"></div>
                   <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-cell">
                     <div v-if="row.columns[s].length === 0" class="kanban-cell-empty">—</div>
                     <div v-for="item in row.columns[s]" :key="item.id" class="task-board-card">

@@ -3035,3 +3035,9 @@ details[open] .thinking-summary::before {
     min-width: 140px;
   }
 }
+
+.kanban-row-spacer {
+  width: 180px;
+  min-width: 180px;
+  flex-shrink: 0;
+}
