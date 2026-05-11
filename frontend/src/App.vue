@@ -1025,17 +1025,30 @@ async function loadSessions() {
   }
 }
 
+async function fetchCockpitData(sessionId) {
+  try {
+    return await fetchJson(`${apiBase}/api/v1/board/cockpit?session_id=${sessionId}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || '')
+    const normalized = message.toLowerCase()
+    if (normalized.includes('session_not_found') || normalized.includes('request failed: 404')) {
+      return null
+    }
+    throw error
+  }
+}
+
 async function loadSessionData() {
   if (!selectedSessionId.value) {
     return
   }
-  const [timelineData, cockpitData] = await Promise.all([
-    fetchJson(`${apiBase}/api/v1/sessions/${selectedSessionId.value}/timeline`),
-    fetchJson(`${apiBase}/api/v1/board/cockpit?session_id=${selectedSessionId.value}`),
-  ])
+  const timelineData = await fetchJson(`${apiBase}/api/v1/sessions/${selectedSessionId.value}/timeline`)
+  const cockpitData = await fetchCockpitData(selectedSessionId.value)
   timeline.value = timelineData
   cockpit.value = cockpitData
-  syncRuntimeSelectionsFromCockpit()
+  if (cockpitData) {
+    syncRuntimeSelectionsFromCockpit()
+  }
 }
 
 async function refreshData() {
