@@ -1728,10 +1728,10 @@ details[open] .thinking-summary::before {
 }
 
 .task-board-card-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(148px, 42%, 220px);
+  align-items: start;
+  gap: 10px;
 }
 
 .task-board-title-wrap {
@@ -1745,8 +1745,11 @@ details[open] .thinking-summary::before {
   font-weight: 700;
   color: #eff8ff;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .task-board-status-pill {
@@ -1794,10 +1797,15 @@ details[open] .thinking-summary::before {
 }
 
 .task-board-card-actions {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
+  align-self: start;
+  justify-self: end;
   gap: 6px;
-  flex-shrink: 0;
+  width: 100%;
+  max-width: 220px;
 }
 
 .priority-badge {

@@ -2081,7 +2081,9 @@ onUnmounted(() => {
                         <div v-if="group.columns[s].length === 0" class="kanban-cell-empty">—</div>
                         <div v-for="item in group.columns[s]" :key="item.id" class="task-board-card">
                           <div class="task-board-card-top">
-                            <div class="task-board-name">{{ item.name }}</div>
+                            <div class="task-board-title-wrap">
+                              <div class="task-board-name">{{ item.name }}</div>
+                            </div>
                             <div class="task-board-card-actions">
                               <span :class="['priority-badge', `priority-P${item.priority || 3}`]">{{ taskBoardPriorityLabelMap[item.priority || 3] || 'P2' }}</span>
                               <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
