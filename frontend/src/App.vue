@@ -54,7 +54,6 @@ const taskBoardItems = ref([])
 const taskBoardProjectFilter = ref('')
 const taskBoardKeyword = ref('')
 const taskBoardStatusFilter = ref('')
-const collapsedProjectRows = ref(new Set())
 const isTaskBoardCreateModalOpen = ref(false)
 const isTaskBoardEditModalOpen = ref(false)
 const creatingTaskBoardItem = ref(false)
@@ -264,6 +263,7 @@ const taskBoardCreateForm = ref({
   upstream_task_id: '',
   parent_task_id: '',
   status: 'draft',
+  priority: 3,
 })
 const taskBoardEditForm = ref({
   name: '',
@@ -273,6 +273,7 @@ const taskBoardEditForm = ref({
   upstream_task_id: '',
   parent_task_id: '',
   status: 'draft',
+  priority: 3,
 })
 const isProjectCreateModalOpen = ref(false)
 const isProjectEditModalOpen = ref(false)
@@ -318,6 +319,20 @@ const taskBoardStatusLabelMap = {
   cancelled: '取消',
 }
 
+const taskBoardPriorityOptions = [
+  { value: 1, label: 'P0' },
+  { value: 2, label: 'P1' },
+  { value: 3, label: 'P2' },
+  { value: 4, label: 'P3' },
+]
+
+const taskBoardPriorityLabelMap = {
+  1: 'P0',
+  2: 'P1',
+  3: 'P2',
+  4: 'P3',
+}
+
 const taskBoardProjectOptions = computed(() => [
   { value: '', label: '全部项目' },
   ...projects.value.map((item) => ({ value: item.id, label: `${item.name}（${item.code}）` })),
@@ -351,42 +366,64 @@ const filteredTaskBoardItems = computed(() => {
   })
 })
 
-// Matrix board: rows = projects, columns = statuses
+// Matrix board: 2-level rows — L1=project (collapsible), L2=priority group (collapsible)
 const KANBAN_STATUSES = ['draft', 'in_progress', 'blocked', 'completed', 'cancelled']
+const KANBAN_PRIORITY_LABELS = { 1: 'P0', 2: 'P1', 3: 'P2', 4: 'P3' }
+const KANBAN_PRIORITY_ORDER = [1, 2, 3, 4]
 
 const taskBoardMatrix = computed(() => {
   const items = filteredTaskBoardItems.value
-  // Collect unique project rows in order (by project_name, then no-project last)
+  // Build nested: project → priority → columns
   const projectMap = new Map()
   for (const item of items) {
-    const key = item.project_id || '__none__'
-    if (!projectMap.has(key)) {
-      projectMap.set(key, { id: key, name: item.project_name || '未关联项目', columns: {} })
-      for (const s of KANBAN_STATUSES) {
-        projectMap.get(key).columns[s] = []
-      }
+    const projectKey = item.project_id || '__none__'
+    const projectName = item.project_name || '未关联项目'
+    const priority = item.priority ?? 3
+    if (!projectMap.has(projectKey)) {
+      projectMap.set(projectKey, { id: projectKey, name: projectName, groups: new Map() })
     }
+    const project = projectMap.get(projectKey)
+    if (!project.groups.has(priority)) {
+      project.groups.set(priority, {
+        id: `${projectKey}|${priority}`,
+        parentId: projectKey,
+        projectName: projectName,
+        priority: priority,
+        priorityLabel: KANBAN_PRIORITY_LABELS[priority] || 'P2',
+        columns: Object.fromEntries(KANBAN_STATUSES.map((s) => [s, []])),
+      })
+    }
+    const group = project.groups.get(priority)
     const status = KANBAN_STATUSES.includes(item.status) ? item.status : 'draft'
-    projectMap.get(key).columns[status].push(item)
+    group.columns[status].push(item)
   }
-  // Sort: named projects first alphabetically, __none__ last
-  const rows = [...projectMap.values()].sort((a, b) => {
-    if (a.id === '__none__') return 1
-    if (b.id === '__none__') return -1
-    return a.name.localeCompare(b.name)
-  })
+  // Convert to sorted array with groups ordered P0→P3
+  const rows = [...projectMap.values()]
+    .map((p) => ({
+      ...p,
+      groups: Array.from(p.groups.values()).sort((a, b) => a.priority - b.priority),
+    }))
+    .sort((a, b) => {
+      if (a.id === '__none__') return 1
+      if (b.id === '__none__') return -1
+      return a.name.localeCompare(b.name)
+    })
+  // Filter out empty priority groups? No — keep them so the structure is visible
   return rows
 })
 
+const collapsedProjectRows = ref(new Set())
+const collapsedPriorityRows = ref(new Set())
+
 function toggleProjectRow(projectId) {
-  const s = collapsedProjectRows.value
-  const next = new Set(s)
-  if (next.has(projectId)) {
-    next.delete(projectId)
-  } else {
-    next.add(projectId)
-  }
-  collapsedProjectRows.value = next
+  const s = new Set(collapsedProjectRows.value)
+  if (s.has(projectId)) { s.delete(projectId) } else { s.add(projectId) }
+  collapsedProjectRows.value = s
+}
+function togglePriorityRow(groupId) {
+  const s = new Set(collapsedPriorityRows.value)
+  if (s.has(groupId)) { s.delete(groupId) } else { s.add(groupId) }
+  collapsedPriorityRows.value = s
 }
 
 const selectedCreateRepo = computed(() => {
@@ -943,19 +980,20 @@ async function persistRuntimePreferences() {
 async function loadSessions() {
   const data = await fetchJson(`${apiBase}/api/v1/sessions`)
   // Sort by updated_at descending (most recently active first)
-  sessions.value = [...data].sort((a, b) => {
+  const orderedSessions = [...data].sort((a, b) => {
     const ta = a.updated_at || a.created_at || ''
     const tb = b.updated_at || b.created_at || ''
     return tb.localeCompare(ta)
   })
-  if (!selectedSessionId.value && data.length > 0) {
-    selectedSessionId.value = data[0].id
-    selectedExternalSessionId.value = data[0].external_session_id
+  sessions.value = orderedSessions
+  if (!selectedSessionId.value && orderedSessions.length > 0) {
+    selectedSessionId.value = orderedSessions[0].id
+    selectedExternalSessionId.value = orderedSessions[0].external_session_id
     return
   }
 
   if (selectedSessionId.value) {
-    const matchedById = data.find((item) => item.id === selectedSessionId.value)
+    const matchedById = orderedSessions.find((item) => item.id === selectedSessionId.value)
     if (matchedById) {
       selectedExternalSessionId.value = matchedById.external_session_id
       return
@@ -963,16 +1001,16 @@ async function loadSessions() {
   }
 
   if (selectedExternalSessionId.value) {
-    const matchedByExternal = data.find((item) => item.external_session_id === selectedExternalSessionId.value)
+    const matchedByExternal = orderedSessions.find((item) => item.external_session_id === selectedExternalSessionId.value)
     if (matchedByExternal) {
       selectedSessionId.value = matchedByExternal.id
       return
     }
   }
 
-  if (data.length > 0) {
-    selectedSessionId.value = data[0].id
-    selectedExternalSessionId.value = data[0].external_session_id
+  if (orderedSessions.length > 0) {
+    selectedSessionId.value = orderedSessions[0].id
+    selectedExternalSessionId.value = orderedSessions[0].external_session_id
   } else {
     selectedSessionId.value = ''
     selectedExternalSessionId.value = ''
@@ -1162,6 +1200,7 @@ function resetTaskBoardCreateForm() {
     upstream_task_id: '',
     parent_task_id: '',
     status: 'draft',
+    priority: 3,
   }
 }
 
@@ -1324,6 +1363,7 @@ function openTaskBoardEditModal(item) {
     upstream_task_id: item.upstream_task_id || '',
     parent_task_id: item.parent_task_id || '',
     status: item.status || 'draft',
+    priority: item.priority ?? 3,
   }
   isTaskBoardEditModalOpen.value = true
 }
@@ -1342,6 +1382,7 @@ function buildTaskBoardPayload(formState) {
     description: formState.description.trim(),
     ai_platform: formState.ai_platform.trim() || 'hermes',
     status: formState.status,
+    priority: formState.priority,
     project_id: formState.project_id || null,
     upstream_task_id: formState.upstream_task_id || null,
     parent_task_id: formState.parent_task_id || null,
@@ -1988,34 +2029,51 @@ onUnmounted(() => {
               </div>
             </div>
             <template v-if="taskBoardMatrix.length > 0">
-              <div v-for="row in taskBoardMatrix" :key="row.id" class="kanban-project-row">
-                <div class="kanban-row-header" @click="toggleProjectRow(row.id)">
-                  <span class="kanban-collapse-icon">{{ collapsedProjectRows.has(row.id) ? '▶' : '▼' }}</span>
-                  <span class="kanban-project-name">{{ row.name }}</span>
-                  <span class="kanban-project-count muted">{{ Object.values(row.columns).reduce((n, arr) => n + arr.length, 0) }} 项</span>
-                </div>
-                <div v-if="!collapsedProjectRows.has(row.id)" class="kanban-row-columns">
-                  <div class="kanban-row-spacer"></div>
-                  <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-cell">
-                    <div v-if="row.columns[s].length === 0" class="kanban-cell-empty">—</div>
-                    <div v-for="item in row.columns[s]" :key="item.id" class="task-board-card">
-                      <div class="task-board-card-top">
-                        <div class="task-board-name">{{ item.name }}</div>
-                        <div class="task-board-card-actions">
-                          <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
-                          <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
-                          <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click.stop="deleteTaskBoardItem(item)">{{ deletingTaskBoardItemId === item.id ? '...' : '删除' }}</button>
-                        </div>
-                      </div>
-                      <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
-                      <div class="task-board-meta task-board-meta-inline">
-                        <span class="task-board-meta-label">{{ item.ai_platform }}</span>
-                        <span class="task-board-meta-label muted">{{ formatSessionTime(item.updated_at) }}</span>
-                      </div>
-                    </div>
+              <template v-for="project in taskBoardMatrix" :key="project.id">
+                <!-- L1: project row header -->
+                <div class="kanban-project-row kanban-project-l1">
+                  <div class="kanban-row-header" @click="toggleProjectRow(project.id)">
+                    <span class="kanban-collapse-icon">{{ collapsedProjectRows.has(project.id) ? '▶' : '▼' }}</span>
+                    <span class="kanban-project-name">{{ project.name }}</span>
+                    <span class="kanban-project-count muted">{{ project.groups.reduce((n, g) => n + Object.values(g.columns).reduce((m, arr) => m + arr.length, 0), 0) }} 项</span>
                   </div>
                 </div>
-              </div>
+                <!-- L2: priority group rows (hidden when project collapsed) -->
+                <template v-if="!collapsedProjectRows.has(project.id)">
+                  <template v-for="group in project.groups" :key="group.id">
+                    <div class="kanban-project-row kanban-priority-l2">
+                      <div class="kanban-row-header kanban-row-sub" @click="togglePriorityRow(group.id)">
+                        <span class="kanban-collapse-icon">{{ collapsedPriorityRows.has(group.id) ? '▶' : '▼' }}</span>
+                        <span class="priority-badge" :class="'priority-P' + group.priority" style="margin-right:6px;">{{ group.priorityLabel }}</span>
+                        <span class="kanban-project-count muted">{{ Object.values(group.columns).reduce((n, arr) => n + arr.length, 0) }} 项</span>
+                      </div>
+                    </div>
+                    <!-- L3: status columns (hidden when priority row collapsed) -->
+                    <div v-if="!collapsedPriorityRows.has(group.id)" class="kanban-row-columns">
+                      <div class="kanban-row-spacer"></div>
+                      <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-cell">
+                        <div v-if="group.columns[s].length === 0" class="kanban-cell-empty">—</div>
+                        <div v-for="item in group.columns[s]" :key="item.id" class="task-board-card">
+                          <div class="task-board-card-top">
+                            <div class="task-board-name">{{ item.name }}</div>
+                            <div class="task-board-card-actions">
+                              <span :class="['priority-badge', `priority-P${item.priority || 3}`]">{{ taskBoardPriorityLabelMap[item.priority || 3] || 'P2' }}</span>
+                              <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
+                              <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
+                              <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click.stop="deleteTaskBoardItem(item)">{{ deletingTaskBoardItemId === item.id ? '...' : '删除' }}</button>
+                            </div>
+                          </div>
+                          <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
+                          <div class="task-board-meta task-board-meta-inline">
+                            <span class="task-board-meta-label">{{ item.ai_platform }}</span>
+                            <span class="task-board-meta-label muted">{{ formatSessionTime(item.updated_at) }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </template>
+              </template>
             </template>
             <div v-else class="project-empty">暂无任务，点击"新建任务"开始。</div>
           </div>
@@ -2583,6 +2641,12 @@ onUnmounted(() => {
               <option v-for="opt in taskBoardStatusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </label>
+          <label class="create-field-row">
+            <span class="create-field-label">优先级</span>
+            <select v-model.number="taskBoardCreateForm.priority" class="picker-provider-select" :disabled="creatingTaskBoardItem">
+              <option v-for="opt in taskBoardPriorityOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </label>
         </div>
 
         <div class="picker-actions">
@@ -2645,6 +2709,12 @@ onUnmounted(() => {
             <span class="create-field-label">状态</span>
             <select v-model="taskBoardEditForm.status" class="picker-provider-select" :disabled="updatingTaskBoardItem">
               <option v-for="opt in taskBoardStatusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </label>
+          <label class="create-field-row">
+            <span class="create-field-label">优先级</span>
+            <select v-model.number="taskBoardEditForm.priority" class="picker-provider-select" :disabled="updatingTaskBoardItem">
+              <option v-for="opt in taskBoardPriorityOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </label>
         </div>

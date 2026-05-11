@@ -85,6 +85,36 @@ def test_list_sessions_returns_empty_initially() -> None:
     assert sessions == []
 
 
+def test_list_sessions_returns_created_and_updated_timestamps(monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    timestamp = datetime(2026, 5, 11, 9, 0, tzinfo=UTC)
+
+    class _StoreStub:
+        def list_sessions(self):
+            return [
+                {
+                    "id": "sess_1",
+                    "platform": "hermes",
+                    "external_session_id": "ext_1",
+                    "title": "Session 1",
+                    "status": "active",
+                    "started_at": timestamp,
+                    "ended_at": None,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            ]
+
+    monkeypatch.setattr("app.main.store", _StoreStub())
+
+    response = client.get("/api/v1/sessions")
+    assert response.status_code == 200
+    sessions = response.json()
+    assert sessions[0]["created_at"].startswith("2026-05-11T09:00:00")
+    assert sessions[0]["updated_at"].startswith("2026-05-11T09:00:00")
+
+
 def test_get_session_timeline_not_found_for_missing_session() -> None:
     response = client.get("/api/v1/sessions/sess_missing/timeline")
     assert response.status_code == 404
