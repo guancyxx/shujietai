@@ -2875,3 +2875,169 @@ details[open] .thinking-summary::before {
   flex-direction: column;
   overflow: hidden;
 }
+
+/* ===== Kanban Matrix Board ===== */
+.kanban-matrix-wrap {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Header row: empty label + status columns */
+.kanban-matrix-header {
+  display: grid;
+  grid-template-columns: 180px repeat(5, minmax(160px, 1fr));
+  gap: 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: rgba(10, 18, 40, 0.96);
+  border-bottom: 1px solid rgba(100, 140, 220, 0.18);
+}
+
+.kanban-row-label-head {
+  padding: 10px 12px;
+}
+
+.kanban-col-header {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8fadd8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-left: 1px solid rgba(100, 140, 220, 0.1);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.kanban-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Each project row */
+.kanban-project-row {
+  border-bottom: 1px solid rgba(100, 140, 220, 0.1);
+}
+
+.kanban-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  width: 180px;
+  min-width: 180px;
+  cursor: pointer;
+  background: rgba(17, 28, 56, 0.6);
+  user-select: none;
+  border-right: 1px solid rgba(100, 140, 220, 0.12);
+  transition: background 0.15s;
+}
+
+.kanban-row-header:hover {
+  background: rgba(30, 50, 100, 0.7);
+}
+
+.kanban-collapse-icon {
+  font-size: 10px;
+  color: #6fa3c8;
+  flex-shrink: 0;
+}
+
+.kanban-project-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #c8deff;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-project-count {
+  font-size: 11px;
+  color: #557;
+  flex-shrink: 0;
+}
+
+/* The columns row (when expanded) */
+.kanban-row-columns {
+  display: grid;
+  grid-template-columns: 180px repeat(5, minmax(160px, 1fr));
+}
+
+.kanban-cell {
+  padding: 8px;
+  border-left: 1px solid rgba(100, 140, 220, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 40px;
+}
+
+.kanban-cell-empty {
+  color: rgba(140, 160, 200, 0.25);
+  font-size: 18px;
+  text-align: center;
+  padding-top: 4px;
+}
+
+/* Compact card styles for matrix cells */
+.task-board-desc-compact {
+  font-size: 12px;
+  color: #7a99c8;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.task-board-meta-inline {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-board-meta-inline .task-board-meta-label {
+  font-size: 11px;
+  color: #4a6a90;
+  background: rgba(60, 90, 140, 0.25);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.task-board-meta-inline .muted {
+  color: #3a5060;
+  background: none;
+}
+
+/* Status dot colors */
+.task-status-draft { background: #5577aa; }
+.task-status-in_progress { background: #44aadd; }
+.task-status-blocked { background: #dd6644; }
+.task-status-completed { background: #44bb77; }
+.task-status-cancelled { background: #556677; }
+
+/* Responsive: collapse to scroll on small screens */
+@media (max-width: 900px) {
+  .kanban-matrix-header,
+  .kanban-row-columns {
+    grid-template-columns: 140px repeat(5, minmax(140px, 1fr));
+  }
+  .kanban-row-header {
+    width: 140px;
+    min-width: 140px;
+  }
+}
+
+.kanban-row-spacer {
+  width: 180px;
+  min-width: 180px;
+  flex-shrink: 0;
+}

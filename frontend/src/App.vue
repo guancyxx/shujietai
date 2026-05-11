@@ -54,6 +54,7 @@ const taskBoardItems = ref([])
 const taskBoardProjectFilter = ref('')
 const taskBoardKeyword = ref('')
 const taskBoardStatusFilter = ref('')
+const collapsedProjectRows = ref(new Set())
 const isTaskBoardCreateModalOpen = ref(false)
 const isTaskBoardEditModalOpen = ref(false)
 const creatingTaskBoardItem = ref(false)
@@ -350,6 +351,44 @@ const filteredTaskBoardItems = computed(() => {
   })
 })
 
+// Matrix board: rows = projects, columns = statuses
+const KANBAN_STATUSES = ['draft', 'in_progress', 'blocked', 'completed', 'cancelled']
+
+const taskBoardMatrix = computed(() => {
+  const items = filteredTaskBoardItems.value
+  // Collect unique project rows in order (by project_name, then no-project last)
+  const projectMap = new Map()
+  for (const item of items) {
+    const key = item.project_id || '__none__'
+    if (!projectMap.has(key)) {
+      projectMap.set(key, { id: key, name: item.project_name || '未关联项目', columns: {} })
+      for (const s of KANBAN_STATUSES) {
+        projectMap.get(key).columns[s] = []
+      }
+    }
+    const status = KANBAN_STATUSES.includes(item.status) ? item.status : 'draft'
+    projectMap.get(key).columns[status].push(item)
+  }
+  // Sort: named projects first alphabetically, __none__ last
+  const rows = [...projectMap.values()].sort((a, b) => {
+    if (a.id === '__none__') return 1
+    if (b.id === '__none__') return -1
+    return a.name.localeCompare(b.name)
+  })
+  return rows
+})
+
+function toggleProjectRow(projectId) {
+  const s = collapsedProjectRows.value
+  const next = new Set(s)
+  if (next.has(projectId)) {
+    next.delete(projectId)
+  } else {
+    next.add(projectId)
+  }
+  collapsedProjectRows.value = next
+}
+
 const selectedCreateRepo = computed(() => {
   if (!createProjectForm.value.repository_url) {
     return null
@@ -442,8 +481,9 @@ function renderMarkdown(text) {
 
 // Merged timeline: historical messages + dispatch messages (via WebSocket) + streaming assistant message
 const displayMessages = computed(() => {
-  // If there is an active dispatch task, show dispatch messages instead of legacy session messages
-  if (dispatchTaskId.value && dispatchMessages.value.length > 0) {
+  // If there is an active dispatch task, always show dispatch messages view
+  // (even while loading — avoids showing stale timeline "已提交..." placeholder)
+  if (dispatchTaskId.value) {
     return dispatchMessages.value
   }
   const msgs = [...(timeline.value.messages || [])]
@@ -902,7 +942,12 @@ async function persistRuntimePreferences() {
 
 async function loadSessions() {
   const data = await fetchJson(`${apiBase}/api/v1/sessions`)
-  sessions.value = data
+  // Sort by updated_at descending (most recently active first)
+  sessions.value = [...data].sort((a, b) => {
+    const ta = a.updated_at || a.created_at || ''
+    const tb = b.updated_at || b.created_at || ''
+    return tb.localeCompare(ta)
+  })
   if (!selectedSessionId.value && data.length > 0) {
     selectedSessionId.value = data[0].id
     selectedExternalSessionId.value = data[0].external_session_id
@@ -978,35 +1023,36 @@ async function restoreActiveDispatchTask() {
     const task = await fetchJson(`${apiBase}/api/v1/dispatch/${taskId}`)
     if (!task) return
 
-    // Only restore if task is in a non-terminal state
-    const nonTerminalStatuses = ['queued', 'running', 'awaiting_input', 'paused']
-    if (!nonTerminalStatuses.includes(task.status)) return
-
-    // Set as active task in the composable
+    // Set as active task in the composable (always — even for terminal tasks, to show history)
     activeTaskId.value = task.id
     activeTask.value = task
 
-    // Register WebSocket event listeners
-    on('status', handleTaskStatus)
-    on('content_delta', handleTaskEvent)
-    on('tool_call', handleTaskEvent)
-    on('await_input', handleTaskEvent)
-    on('completed', handleTaskEvent)
-    on('error', handleTaskEvent)
-    on('cancelled', handleTaskEvent)
+    const nonTerminalStatuses = ['queued', 'running', 'awaiting_input', 'paused']
+    const isLive = nonTerminalStatuses.includes(task.status)
 
-    // Subscribe to task events via WebSocket
-    if (connected.value) {
-      subscribe(task.id)
-    } else {
-      wsConnect()
-      // Subscribe once connected (next tick is sufficient — ws connect is near-instant on same host)
-      await new Promise(resolve => setTimeout(resolve, 500))
-      if (connected.value) subscribe(task.id)
+    if (isLive) {
+      // Register WebSocket event listeners only for live tasks
+      on('status', handleTaskStatus)
+      on('content_delta', handleTaskEvent)
+      on('tool_call', handleTaskEvent)
+      on('await_input', handleTaskEvent)
+      on('completed', handleTaskEvent)
+      on('error', handleTaskEvent)
+      on('cancelled', handleTaskEvent)
+
+      // Subscribe to task events via WebSocket
+      if (connected.value) {
+        subscribe(task.id)
+      } else {
+        wsConnect()
+        await new Promise(resolve => setTimeout(resolve, 500))
+        if (connected.value) subscribe(task.id)
+      }
     }
 
-    // Load existing events from REST (catch up on anything before WS subscription)
-    const eventsData = await fetchJson(`${apiBase}/api/v1/dispatch/${task.id}/events`)
+    // Load existing events from REST (always — shows full execution history)
+    // Use a large limit to fetch all events in one request (backend default is 200)
+    const eventsData = await fetchJson(`${apiBase}/api/v1/dispatch/${task.id}/events?limit=2000`)
     const items = eventsData.items || eventsData || []
     taskEvents.value = items.map(evt => ({
       id: evt.id,
@@ -1798,7 +1844,9 @@ onUnmounted(() => {
           </div>
 
           <div class="timeline-scroll" ref="timelineScrollRef" @scroll="onTimelineScroll">
-            <div v-if="displayMessages.length === 0" class="muted">暂无消息</div>
+            <div v-if="displayMessages.length === 0 && dispatchTaskId && dispatchActiveTask && ['queued','running','awaiting_input','paused'].includes(dispatchActiveTask.status)" class="muted">⏳ 正在恢复任务进度，接入实时数据流中...</div>
+            <div v-else-if="displayMessages.length === 0 && dispatchTaskId" class="muted">📭 暂无执行记录</div>
+            <div v-else-if="displayMessages.length === 0" class="muted">暂无消息</div>
             <div
               v-for="message in displayMessages"
               :key="message.id"
@@ -1925,57 +1973,52 @@ onUnmounted(() => {
               <select v-model="taskBoardProjectFilter" class="task-board-filter-select">
                 <option v-for="opt in taskBoardProjectOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
               </select>
-              <select v-model="taskBoardStatusFilter" class="task-board-filter-select">
-                <option v-for="opt in taskBoardStatusFilterOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-              </select>
               <input v-model="taskBoardKeyword" class="project-search task-board-search" placeholder="搜索任务名称/描述" />
               <button type="button" class="session-new-btn" @click="openTaskBoardCreateModal">新建任务</button>
             </div>
           </div>
 
-          <div class="task-board-list" v-if="filteredTaskBoardItems.length > 0">
-            <div v-for="item in filteredTaskBoardItems" :key="item.id" class="task-board-card">
-              <div class="task-board-card-top">
-                <div class="task-board-title-wrap">
-                  <div class="task-board-name">{{ item.name }}</div>
-                  <span class="task-board-status-pill" :class="taskBoardStatusClass(item.status)">{{ taskBoardStatusLabelMap[item.status] || item.status }}</span>
-                </div>
-                <div class="task-board-card-actions">
-                  <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click="startConversationFromTask(item)">
-                    {{ startingConversationFromTask ? '启动中...' : '开始会话' }}
-                  </button>
-                  <button type="button" class="project-btn" @click="openTaskBoardEditModal(item)">编辑</button>
-                  <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click="deleteTaskBoardItem(item)">
-                    {{ deletingTaskBoardItemId === item.id ? '删除中...' : '删除' }}
-                  </button>
-                </div>
-              </div>
-              <div class="task-board-desc">{{ item.description || '暂无描述' }}</div>
-              <div class="task-board-meta-grid">
-                <div class="task-board-meta">
-                  <span class="task-board-meta-label">AI 平台</span>
-                  <span class="task-board-meta-value">{{ item.ai_platform }}</span>
-                </div>
-                <div class="task-board-meta">
-                  <span class="task-board-meta-label">所属项目</span>
-                  <span class="task-board-meta-value">{{ item.project_name || '未关联' }}</span>
-                </div>
-                <div class="task-board-meta" v-if="item.upstream_task_name">
-                  <span class="task-board-meta-label">上游依赖</span>
-                  <span class="task-board-meta-value">{{ item.upstream_task_name }}</span>
-                </div>
-                <div class="task-board-meta" v-if="item.parent_task_name">
-                  <span class="task-board-meta-label">父任务</span>
-                  <span class="task-board-meta-value">{{ item.parent_task_name }}</span>
-                </div>
-                <div class="task-board-meta">
-                  <span class="task-board-meta-label">更新时间</span>
-                  <span class="task-board-meta-value">{{ formatSessionTime(item.updated_at) }}</span>
-                </div>
+          <!-- Matrix Kanban: columns=statuses, rows=projects -->
+          <div class="kanban-matrix-wrap">
+            <div class="kanban-matrix-header">
+              <div class="kanban-row-label-head"></div>
+              <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-col-header" :class="'kanban-col-' + s">
+                <span class="kanban-status-dot" :class="'task-status-' + s"></span>
+                {{ taskBoardStatusLabelMap[s] }}
               </div>
             </div>
+            <template v-if="taskBoardMatrix.length > 0">
+              <div v-for="row in taskBoardMatrix" :key="row.id" class="kanban-project-row">
+                <div class="kanban-row-header" @click="toggleProjectRow(row.id)">
+                  <span class="kanban-collapse-icon">{{ collapsedProjectRows.has(row.id) ? '▶' : '▼' }}</span>
+                  <span class="kanban-project-name">{{ row.name }}</span>
+                  <span class="kanban-project-count muted">{{ Object.values(row.columns).reduce((n, arr) => n + arr.length, 0) }} 项</span>
+                </div>
+                <div v-if="!collapsedProjectRows.has(row.id)" class="kanban-row-columns">
+                  <div class="kanban-row-spacer"></div>
+                  <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-cell">
+                    <div v-if="row.columns[s].length === 0" class="kanban-cell-empty">—</div>
+                    <div v-for="item in row.columns[s]" :key="item.id" class="task-board-card">
+                      <div class="task-board-card-top">
+                        <div class="task-board-name">{{ item.name }}</div>
+                        <div class="task-board-card-actions">
+                          <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
+                          <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
+                          <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click.stop="deleteTaskBoardItem(item)">{{ deletingTaskBoardItemId === item.id ? '...' : '删除' }}</button>
+                        </div>
+                      </div>
+                      <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
+                      <div class="task-board-meta task-board-meta-inline">
+                        <span class="task-board-meta-label">{{ item.ai_platform }}</span>
+                        <span class="task-board-meta-label muted">{{ formatSessionTime(item.updated_at) }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <div v-else class="project-empty">暂无任务，点击"新建任务"开始。</div>
           </div>
-          <div v-else class="project-empty">暂无任务，点击"新建任务"开始。</div>
         </article>
       </section>
 
