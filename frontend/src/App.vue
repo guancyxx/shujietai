@@ -1654,7 +1654,7 @@ async function sendMessageToHermes() {
       clearActiveTask()
       if (!wsConnected.value) wsConnect()
       await createDispatchTask({
-        aiPlatform: 'hermes',
+        aiPlatform: 'hermes-runs',
         initialPrompt: trimmed,
         model: selectedModel.value || '',
         skills: [...selectedSkills.value],
