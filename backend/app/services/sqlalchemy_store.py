@@ -405,6 +405,7 @@ class SqlAlchemySessionStore:
             parent_task_id=UUID(row.parent_task_id) if row.parent_task_id else None,
             parent_task_name=parent.name if parent else None,
             status=row.status,
+            priority=row.priority,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -437,7 +438,7 @@ class SqlAlchemySessionStore:
                 item_id = str(uuid4())
                 now = self.now()
                 entity = TaskBoardEntity(
-                    id=f"task_{uuid4().hex[:12]}",
+                    id=item_id,
                     name=payload.name.strip(),
                     description=payload.description.strip(),
                     ai_platform=(payload.ai_platform or "hermes").strip() or "hermes",
@@ -445,10 +446,12 @@ class SqlAlchemySessionStore:
                     upstream_task_id=str(payload.upstream_task_id) if payload.upstream_task_id is not None else None,
                     parent_task_id=str(payload.parent_task_id) if payload.parent_task_id is not None else None,
                     status=payload.status,
+                    priority=payload.priority,
                     created_at=now,
                     updated_at=now,
                 )
 
+                db.add(entity)
                 db.flush()
                 return self._build_task_board_item(db, entity)
 
