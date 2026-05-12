@@ -39,7 +39,30 @@ const sending = ref(false)
 const deletingSessionId = ref('')
 const clearingSessions = ref(false)
 const composerText = ref('')
-const activePage = ref('chat')
+// Whitelist of valid pages for localStorage restore
+const PAGE_WHITELIST = ['chat', 'projects', 'task-board', 'model-config', 'system-config', 'dispatch-history', 'skills-catalog']
+
+// Load persisted active page from localStorage on init — avoids flashing to chat first
+function getInitialPage() {
+  try {
+    const saved = localStorage.getItem('shujietai_activePage')
+    if (PAGE_WHITELIST.includes(saved)) return saved
+  } catch {
+    // localStorage unavailable (private browsing), ignore
+  }
+  return 'chat'
+}
+
+const activePage = ref(getInitialPage())
+
+// Persist active page on every switch so refresh restores the last page
+watch(activePage, (page) => {
+  try {
+    localStorage.setItem('shujietai_activePage', page)
+  } catch {
+    // localStorage write blocked, ignore
+  }
+})
 const projects = ref([])
 const githubRepos = ref([])
 const projectSearch = ref('')
