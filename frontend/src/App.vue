@@ -1901,7 +1901,7 @@ onUnmounted(() => {
         <nav class="top-nav" aria-label="页面切换">
           <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'chat' }" @click="activePage = 'chat'">
             <span class="top-nav-btn-icon" aria-hidden="true">💬</span>
-            <span class="top-nav-btn-label">对话页</span>
+            <span class="top-nav-btn-label">会话中心</span>
           </button>
           <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'projects' }" @click="activePage = 'projects'">
             <span class="top-nav-btn-icon" aria-hidden="true">📁</span>
