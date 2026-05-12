@@ -763,41 +763,123 @@ def get_skills_graph():
     return {"nodes": nodes, "edges": edges}
 
 
-@app.get("/api/v1/skills/{skill_name:path}/content")
-def get_skill_content(skill_name: str):
-    """Return the raw SKILL.md content for a given skill name (e.g. 'devops/kanban-worker')."""
-    skills_dir = Path(os.getenv("HERMES_SKILLS_DIR", "/home/guancy/.hermes/skills"))
-    personal_dir = Path(os.getenv("HERMES_PERSONAL_SKILLS_DIR", "/home/guancy/.hermes/personal-skills"))
+def _skill_base_dirs() -> tuple[Path, Path]:
+    return (
+        Path(os.getenv("HERMES_PERSONAL_SKILLS_DIR", "/home/guancy/.hermes/personal-skills")),
+        Path(os.getenv("HERMES_SKILLS_DIR", "/home/guancy/.hermes/skills")),
+    )
 
-    # Search personal first, then builtin
-    for base_dir in (personal_dir, skills_dir):
+
+def _find_skill_markdown(skill_name: str) -> Path | None:
+    safe_name = skill_name.strip().strip("/")
+    if not safe_name or ".." in safe_name.split("/") or any(ch in safe_name for ch in "*?[]"):
+        return None
+
+    for base_dir in _skill_base_dirs():
         if not base_dir.exists():
             continue
-        # skill_name may be "category/name" — look for SKILL.md two levels deep
-        parts = skill_name.split("/", 1)
+        parts = safe_name.split("/", 1)
         candidates = []
         if len(parts) == 2:
             candidates.append(base_dir / parts[0] / parts[1] / "SKILL.md")
-        candidates.append(base_dir / skill_name / "SKILL.md")
+        candidates.append(base_dir / safe_name / "SKILL.md")
         for candidate in candidates:
             if candidate.is_file():
-                try:
-                    content = candidate.read_text(encoding="utf-8")
-                    return {"name": skill_name, "content": content, "path": str(candidate)}
-                except Exception as e:
-                    raise HTTPException(status_code=500, detail=str(e))
-        # Flat name fallback: recursively search subdirectories for <name>/SKILL.md
+                return candidate
         try:
-            for found in base_dir.rglob(f"**/{skill_name}/SKILL.md"):
-                try:
-                    content = found.read_text(encoding="utf-8")
-                    return {"name": skill_name, "content": content, "path": str(found)}
-                except Exception as e:
-                    raise HTTPException(status_code=500, detail=str(e))
+            for found in base_dir.rglob(f"**/{safe_name}/SKILL.md"):
+                if found.is_file():
+                    return found
         except OSError:
-            pass
+            continue
+    return None
 
-    raise HTTPException(status_code=404, detail=f"SKILL.md not found for: {skill_name}")
+
+def _normalize_string_list(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _extract_skill_summary(content: str, frontmatter_end: int) -> str:
+    body = content[frontmatter_end:].strip() if frontmatter_end >= 0 else content.strip()
+    clean_lines = [line.strip() for line in body.splitlines() if line.strip() and not line.strip().startswith("#")]
+    summary = " ".join(clean_lines)
+    return summary[:700]
+
+
+@app.get("/api/v1/skills/{skill_name:path}/detail")
+def get_skill_detail(skill_name: str):
+    """Return parsed metadata and a compact summary for a SKILL.md file."""
+    import re as _re
+    import yaml as _yaml
+
+    skill_md = _find_skill_markdown(skill_name)
+    if skill_md is None:
+        raise HTTPException(status_code=404, detail=f"SKILL.md not found for: {skill_name}")
+
+    try:
+        content = skill_md.read_text(encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    frontmatter: dict = {}
+    frontmatter_end = -1
+    match = _re.match(r"^---\n(.*?)\n---", content, _re.DOTALL)
+    if match:
+        frontmatter_end = match.end()
+        try:
+            loaded = _yaml.safe_load(match.group(1)) or {}
+            if isinstance(loaded, dict):
+                frontmatter = loaded
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Invalid skill frontmatter: {exc}") from exc
+
+    rel_category = "general"
+    for base_dir in _skill_base_dirs():
+        try:
+            rel = skill_md.relative_to(base_dir)
+        except ValueError:
+            continue
+        if len(rel.parts) >= 3:
+            rel_category = rel.parts[0]
+        break
+
+    metadata = frontmatter.get("metadata") if isinstance(frontmatter.get("metadata"), dict) else {}
+    hermes_meta = metadata.get("hermes") if isinstance(metadata.get("hermes"), dict) else {}
+    tags = _normalize_string_list(frontmatter.get("tags") or hermes_meta.get("tags"))
+    related_skills = _normalize_string_list(
+        frontmatter.get("related_skills")
+        or frontmatter.get("requires_skills")
+        or hermes_meta.get("related_skills")
+    )
+
+    return {
+        "name": skill_name,
+        "display_name": frontmatter.get("name") or skill_name,
+        "description": frontmatter.get("description") or "",
+        "category": rel_category,
+        "tags": tags,
+        "path": str(skill_md),
+        "related_skills": related_skills,
+        "skill_type": frontmatter.get("skill_type") or "unknown",
+        "content_summary": _extract_skill_summary(content, frontmatter_end),
+    }
+
+
+@app.get("/api/v1/skills/{skill_name:path}/content")
+def get_skill_content(skill_name: str):
+    """Return the raw SKILL.md content for a given skill name (e.g. 'devops/kanban-worker')."""
+    skill_md = _find_skill_markdown(skill_name)
+    if skill_md is None:
+        raise HTTPException(status_code=404, detail=f"SKILL.md not found for: {skill_name}")
+    try:
+        content = skill_md.read_text(encoding="utf-8")
+        return {"name": skill_name, "content": content, "path": str(skill_md)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.put("/api/v1/runtime/preferences")
