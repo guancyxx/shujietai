@@ -37,3 +37,6 @@ Thumbs.db
 # Docker volumes (if local bind used)
 postgres_data/
 redis_data/
+
+# Local temporary artifacts
+tmp/
