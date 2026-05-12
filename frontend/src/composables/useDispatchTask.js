@@ -329,19 +329,71 @@ function clearActiveTask() {
   taskError.value = ''
 }
 
-// Build messages from dispatch events for timeline display
+// Build messages from dispatch events for timeline display.
+//
+// run_id is a run-lifecycle boundary that MUST participate in merge identity.
+// Adjacent assistant content_delta events with different run_ids are never
+// merged into the same bubble — this prevents late-delta pollution from
+// a cancelled/interrupted old run bleeding into the new assistant reply.
 const dispatchMessages = computed(() => {
   const messages = []
   const toolStates = new Map()
+  // Track the last assistant content run_id so we can inject a visual
+  // separator when the run boundary changes (e.g. after interrupt+resume).
+  let lastAssistantRunId = null
 
   for (const evt of taskEvents.value) {
     const payload = evt.payload || {}
+    const evtRunId = evt.run_id || null
 
     if (evt.event_type === 'content_delta') {
       const currentRole = payload.role || 'assistant'
-      // Group consecutive content_deltas by role
+
+      // --- Run-boundary separator for assistant content ---
+      // When the assistant switches from one run_id to another,
+      // insert a visible system separator so the user can see
+      // where the new conversation round begins.
+      if (
+        currentRole === 'assistant' &&
+        evtRunId &&
+        lastAssistantRunId &&
+        evtRunId !== lastAssistantRunId
+      ) {
+        messages.push({
+          id: `sep_run_${evt.id}`,
+          role: 'system',
+          content: '--- 会话轮次更新 ---',
+          content_type: 'text/plain',
+          created_at: evt.created_at,
+          meta_json: {
+            separator: true,
+            run_separator: true,
+            from_run_id: lastAssistantRunId,
+            to_run_id: evtRunId,
+          },
+          _groupKey: 'separator',
+        })
+      }
+
+      // Track the latest assistant run.
+      if (currentRole === 'assistant' && evtRunId) {
+        lastAssistantRunId = evtRunId
+      }
+
+      // --- Merge condition ---
+      // Two adjacent content_delta events merge only when they share:
+      //   1. same role (assistant / user)
+      //   2. same _groupKey (content)
+      //   3. same _run_id (both null or identical value)
       const lastMsg = messages[messages.length - 1]
-      if (lastMsg && lastMsg.role === currentRole && lastMsg._groupKey === 'content') {
+      const prevRunId = lastMsg ? (lastMsg._run_id || null) : undefined
+      const canMerge =
+        lastMsg &&
+        lastMsg.role === currentRole &&
+        lastMsg._groupKey === 'content' &&
+        prevRunId === evtRunId
+
+      if (canMerge) {
         lastMsg.content += payload.content || ''
       } else {
         const message = normalizeAssistantErrorLikeMessage({
@@ -352,9 +404,21 @@ const dispatchMessages = computed(() => {
           created_at: evt.created_at,
           meta_json: {},
           _groupKey: 'content',
+          _run_id: evtRunId,
         })
         messages.push(message)
       }
+    } else if (evt.event_type === 'task.interrupted') {
+      // Visible separator for interrupt-and-revise events.
+      messages.push({
+        id: evt.id,
+        role: 'system',
+        content: '--- 会话已中断 ---',
+        content_type: 'text/plain',
+        created_at: evt.created_at,
+        meta_json: { separator: true, interrupted: true },
+        _groupKey: 'separator',
+      })
     } else if (evt.event_type === 'tool_call') {
       const toolCallId = evt.tool_call_id || payload.tool_call_id || payload.id || `tool_${evt.seq || evt.id}`
       const functionName = payload.function_name || payload.tool_name || 'tool'
@@ -422,14 +486,20 @@ const dispatchMessages = computed(() => {
         toolState.message.content = displayName
       }
     } else if (evt.event_type === 'agent_thinking') {
-      // Reasoning / thinking text from extended-thinking models or runs connector
+      // Reasoning / thinking text from extended-thinking models or runs connector.
+      // Also respects run_id so thinking from different runs stays separate.
       const thinkingText = payload.text || ''
       if (thinkingText) {
         const lastMsg = messages[messages.length - 1]
-        // Accumulate into existing thinking bubble if it's still the last message
-        if (lastMsg && lastMsg._groupKey === 'agent_thinking') {
+        const prevRunId = lastMsg ? (lastMsg._run_id || null) : undefined
+        const canMerge =
+          lastMsg &&
+          lastMsg._groupKey === 'agent_thinking' &&
+          prevRunId === evtRunId
+
+        if (canMerge) {
           lastMsg.content += thinkingText
-          lastMsg.updatedAt = evt.created_at
+          lastMsg.meta_json = { ...(lastMsg.meta_json || {}), _updatedAt: evt.created_at }
         } else {
           messages.push({
             id: evt.id,
@@ -439,6 +509,7 @@ const dispatchMessages = computed(() => {
             created_at: evt.created_at,
             meta_json: { thinking: true },
             _groupKey: 'agent_thinking',
+            _run_id: evtRunId,
           })
         }
       }
