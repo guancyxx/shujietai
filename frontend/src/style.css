@@ -1850,8 +1850,8 @@ details[open] .thinking-summary::before {
   align-self: start;
   justify-self: end;
   gap: 6px;
-  width: 100%;
-  max-width: 220px;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .kanban-cell .task-board-card-top {
@@ -3219,10 +3219,20 @@ details[open] .thinking-summary::before {
   display: flex;
   flex-direction: column;
   gap: 0;
+  --kanban-expanded-columns: 6;
+  --kanban-collapsed-columns: 0;
+  --kanban-label-track: minmax(clamp(8rem, 14vw, 12rem), 0.55fr);
+  --kanban-expanded-track: minmax(clamp(11rem, 14vw, 17rem), 1fr);
+  --kanban-collapsed-track: minmax(3.5rem, 0.18fr);
 }
 
 .kanban-matrix-header {
   display: grid;
+  grid-template-columns:
+    var(--kanban-label-track)
+    repeat(var(--kanban-expanded-columns), var(--kanban-expanded-track))
+    repeat(var(--kanban-collapsed-columns), var(--kanban-collapsed-track));
+  min-width: max-content;
   gap: 0;
   position: sticky;
   top: 0;
@@ -3300,8 +3310,7 @@ details[open] .thinking-summary::before {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  width: 180px;
-  min-width: 180px;
+  min-width: 0;
   cursor: pointer;
   background: rgba(17, 28, 56, 0.6);
   user-select: none;
@@ -3340,6 +3349,11 @@ details[open] .thinking-summary::before {
 
 .kanban-row-columns {
   display: grid;
+  grid-template-columns:
+    var(--kanban-label-track)
+    repeat(var(--kanban-expanded-columns), var(--kanban-expanded-track))
+    repeat(var(--kanban-collapsed-columns), var(--kanban-collapsed-track));
+  min-width: max-content;
 }
 
 .kanban-cell {
@@ -3438,15 +3452,12 @@ details[open] .thinking-summary::before {
 .task-status-completed { background: #44bb77; }
 
 @media (max-width: 900px) {
-  .kanban-row-header,
-  .kanban-row-spacer {
-    width: 140px;
-    min-width: 140px;
+  .kanban-matrix-wrap {
+    --kanban-label-track: minmax(clamp(7rem, 28vw, 10rem), 0.5fr);
+    --kanban-expanded-track: minmax(clamp(10rem, 42vw, 15rem), 1fr);
   }
 }
 
 .kanban-row-spacer {
-  width: 180px;
-  min-width: 180px;
-  flex-shrink: 0;
+  min-width: 0;
 }
