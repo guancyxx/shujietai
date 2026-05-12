@@ -59,35 +59,6 @@
   gap: 12px;
   align-content: start;
   padding: 4px 4px 6px;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-}
-
-.task-board-list:hover {
-  scrollbar-color: rgba(111, 186, 255, 0.3) transparent;
-}
-
-.task-board-list::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-
-.task-board-list::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 10px;
-  transition: background 200ms ease;
-}
-
-.task-board-list:hover::-webkit-scrollbar-thumb {
-  background: rgba(111, 186, 255, 0.3);
-}
-
-.task-board-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(111, 186, 255, 0.55);
-}
-
-.task-board-list::-webkit-scrollbar-track {
-  background: transparent;
 }
 
 .task-board-card {

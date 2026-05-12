@@ -1969,7 +1969,7 @@ onUnmounted(() => {
             </select>
           </div>
 
-          <div class="conversation-only-list">
+          <div class="conversation-only-list scrollbar-themed-auto-hide">
             <div
               v-for="item in sessions"
               :key="item.id"
@@ -2021,7 +2021,7 @@ onUnmounted(() => {
             <div v-if="dispatchError" class="dispatch-friendly-error">{{ dispatchError }}</div>
           </div>
 
-          <div class="timeline-scroll" ref="timelineScrollRef" @scroll="onTimelineScroll">
+          <div class="timeline-scroll scrollbar-themed" ref="timelineScrollRef" @scroll="onTimelineScroll">
             <div v-if="displayMessages.length === 0 && dispatchTaskId && dispatchActiveTask && ['queued','running','awaiting_input','paused'].includes(dispatchActiveTask.status)" class="muted">⏳ 正在恢复任务进度，接入实时数据流中...</div>
             <div v-else-if="displayMessages.length === 0 && dispatchTaskId" class="muted">📭 暂无执行记录</div>
             <div v-else-if="displayMessages.length === 0" class="muted">暂无消息</div>
@@ -2120,7 +2120,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="project-list" v-if="filteredProjects.length > 0">
+          <div class="project-list scrollbar-themed" v-if="filteredProjects.length > 0">
             <div v-for="item in filteredProjects" :key="item.id" class="project-card project-card-clickable" @click="openTaskBoardByProject(item)">
               <div class="project-card-top">
                 <div class="project-title-wrap">
@@ -2163,7 +2163,7 @@ onUnmounted(() => {
           </div>
 
           <!-- Matrix Kanban: columns=statuses, rows=projects; cards render parent/child task trees -->
-          <div class="kanban-matrix-wrap">
+          <div class="kanban-matrix-wrap scrollbar-themed">
             <div class="kanban-matrix-header" :style="kanbanMatrixStyle">
               <div class="kanban-row-label-head">项目</div>
               <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-col-header" :class="['kanban-col-' + s, { 'kanban-col-collapsed': isKanbanStatusCollapsed(s) }]">
@@ -2416,7 +2416,7 @@ onUnmounted(() => {
 
           <!-- Task detail modal -->
           <div v-if="dispatchDetailTask" class="dispatch-detail-overlay" @click.self="dispatchDetailTask = null">
-            <div class="dispatch-detail-panel panel">
+            <div class="dispatch-detail-panel panel scrollbar-themed">
               <div class="dispatch-detail-header">
                 <h3>调度任务详情</h3>
                 <button type="button" class="picker-close-btn" @click="dispatchDetailTask = null" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
@@ -2428,7 +2428,7 @@ onUnmounted(() => {
                 <div class="dispatch-detail-row"><strong>创建:</strong> {{ formatTime(dispatchDetailTask.created_at) }}</div>
                 <div v-if="dispatchDetailTask.error_message" class="dispatch-detail-row dispatch-detail-error"><strong>错误:</strong> {{ dispatchDetailTask.error_message }}</div>
                 <div class="dispatch-detail-row"><strong>初始提示:</strong></div>
-                <pre class="dispatch-detail-pre">{{ dispatchDetailTask.initial_prompt }}</pre>
+                <pre class="dispatch-detail-pre scrollbar-themed">{{ dispatchDetailTask.initial_prompt }}</pre>
                 <div v-if="dispatchDetailEvents.length > 0" class="dispatch-detail-events">
                   <h4>事件流 ({{ dispatchDetailEvents.length }})</h4>
                   <div v-for="(evt, idx) in dispatchDetailEvents" :key="idx" class="dispatch-event-item">
