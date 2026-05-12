@@ -13,6 +13,8 @@
 .task-board-panel {
   padding: 16px;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
@@ -117,7 +119,7 @@
 
 .task-board-card-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(148px, 42%, 220px);
+  grid-template-columns: minmax(0, 1fr) clamp(136px, 38%, 196px);
   align-items: start;
   gap: 10px;
 }
