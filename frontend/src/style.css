@@ -1702,6 +1702,7 @@ details[open] .thinking-summary::before {
 }
 
 .task-board-card {
+  cursor: grab;
   border: 1px solid rgba(124, 197, 255, 0.3);
   border-radius: 14px;
   background:
@@ -1796,6 +1797,12 @@ details[open] .thinking-summary::before {
   background: linear-gradient(135deg, rgba(108, 40, 48, 0.66), rgba(80, 28, 34, 0.64));
 }
 
+.task-board-card-dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+  border-style: dashed;
+}
+
 .task-board-card-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1847,6 +1854,39 @@ details[open] .thinking-summary::before {
   background: linear-gradient(135deg, rgba(50, 60, 90, 0.5), rgba(35, 42, 70, 0.5));
 }
 
+.priority-select {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  text-align: center;
+  min-width: 54px;
+  min-height: 28px;
+  padding: 2px 18px 2px 8px;
+  border: 1px solid rgba(124, 197, 255, 0.28);
+  border-radius: 999px;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  background-color: rgba(16, 30, 58, 0.72);
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 10px) 50%, calc(100% - 6px) 50%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 0 1px rgba(111, 186, 255, 0.1) inset;
+}
+
+.priority-select:focus {
+  outline: none;
+  border-color: rgba(138, 231, 255, 0.78);
+  box-shadow: 0 0 0 2px rgba(75, 187, 255, 0.18), 0 0 18px rgba(64, 180, 255, 0.2);
+}
+
+.priority-select:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .task-board-desc {
   color: #d7e8ff;
   font-size: 13px;
@@ -1878,6 +1918,106 @@ details[open] .thinking-summary::before {
   font-size: 12px;
   color: #dff0ff;
   word-break: break-all;
+}
+
+.task-description-editor {
+  min-height: 220px;
+  resize: vertical;
+}
+
+.task-detail-modal {
+  width: min(920px, 95vw);
+}
+
+.task-detail-header {
+  align-items: flex-start;
+}
+
+.task-detail-subtitle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.task-detail-body {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+  max-height: min(62vh, 680px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.task-detail-section {
+  border: 1px solid rgba(124, 197, 255, 0.22);
+  border-radius: 14px;
+  background: rgba(13, 23, 49, 0.72);
+  padding: 14px;
+}
+
+.task-detail-section h4 {
+  margin: 0 0 10px;
+  color: #eff8ff;
+  font-size: 14px;
+}
+
+.task-detail-markdown {
+  color: #dcecff;
+  line-height: 1.65;
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.task-detail-markdown :where(p, ul, ol, pre, blockquote) {
+  margin: 0 0 10px;
+}
+
+.task-detail-markdown :where(ul, ol) {
+  padding-left: 20px;
+}
+
+.task-detail-markdown code {
+  border: 1px solid rgba(124, 197, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(7, 13, 31, 0.7);
+  padding: 1px 5px;
+}
+
+.task-detail-markdown pre {
+  overflow: auto;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(7, 13, 31, 0.78);
+}
+
+.task-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.task-detail-grid div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(124, 197, 255, 0.18);
+  border-radius: 12px;
+  background: rgba(15, 27, 56, 0.66);
+  padding: 10px;
+  min-width: 0;
+}
+
+.task-detail-grid span {
+  color: #93afd8;
+  font-size: 11px;
+}
+
+.task-detail-grid strong {
+  color: #eff8ff;
+  font-size: 12px;
+  font-weight: 600;
+  word-break: break-word;
 }
 
 
@@ -2085,6 +2225,10 @@ details[open] .thinking-summary::before {
   }
 
   .task-board-list {
+    grid-template-columns: 1fr;
+  }
+
+  .task-detail-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3034,12 +3178,18 @@ details[open] .thinking-summary::before {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 40px;
+  min-height: 64px;
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+
+.kanban-cell-drop-active {
+  background: rgba(73, 144, 226, 0.08);
+  box-shadow: 0 0 0 1px rgba(111, 186, 255, 0.18) inset;
 }
 
 .kanban-cell-empty {
-  color: rgba(140, 160, 200, 0.25);
-  font-size: 18px;
+  color: rgba(140, 160, 200, 0.38);
+  font-size: 12px;
   text-align: center;
   padding-top: 4px;
 }
