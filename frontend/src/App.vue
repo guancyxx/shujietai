@@ -1345,6 +1345,21 @@ async function loadTaskBoardItems() {
   const endpoint = query ? `${apiBase}/api/v1/task-board?${query}` : `${apiBase}/api/v1/task-board`
   const data = await fetchJson(endpoint)
   taskBoardItems.value = data.items || []
+  // Default-collapse all parent nodes so kanban starts compact
+  collapseAllTaskNodes()
+}
+
+function collapseAllTaskNodes() {
+  const tree = buildTaskTree(taskBoardItems.value)
+  const parentIds = new Set()
+  const walk = (nodes) => {
+    for (const node of nodes) {
+      if (node.children.length) parentIds.add(node.id)
+      walk(node.children)
+    }
+  }
+  walk(tree)
+  collapsedTaskNodes.value = parentIds
 }
 
 function resetTaskBoardCreateForm() {

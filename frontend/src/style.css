@@ -3277,15 +3277,6 @@ details[open] .thinking-summary::before {
   background: rgba(30, 50, 100, 0.7);
 }
 
-.kanban-row-sub {
-  padding-left: 32px;
-  opacity: 0.88;
-}
-
-.kanban-row-sub .kanban-collapse-icon {
-  font-size: 9px;
-}
-
 .kanban-collapse-icon {
   font-size: 10px;
   color: #6fa3c8;
