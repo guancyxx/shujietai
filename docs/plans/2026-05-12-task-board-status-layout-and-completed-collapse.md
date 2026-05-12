@@ -44,3 +44,4 @@ Fix the task-board matrix layout after adding the pending-execution status, keep
 - Confirm no backend/API files changed.
 - Confirm `.task-board-grid` keeps a single full-width column and `.task-board-panel` spans `1 / -1` so generic `.main-grid` breakpoints cannot squeeze the board.
 - Confirm the diff contains no hard-coded `repeat(5, ...)` matrix template for the six-status board.
+- Use browser harness against `http://127.0.0.1:15173/` to verify the task-board matrix renders without abnormal squeezed/one-column state, header/body tracks align, and completed-column expand/collapse keeps overflow inside the board panel.

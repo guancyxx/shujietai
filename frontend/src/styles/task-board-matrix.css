@@ -12,7 +12,7 @@
   display: grid;
   grid-template-columns: var(--kanban-grid-template);
   min-width: max(100%, var(--kanban-matrix-min-width));
-  width: max-content;
+  width: max(100%, var(--kanban-matrix-min-width));
   gap: 0;
   position: sticky;
   top: 0;
@@ -142,7 +142,7 @@
   display: grid;
   grid-template-columns: var(--kanban-grid-template);
   min-width: max(100%, var(--kanban-matrix-min-width));
-  width: max-content;
+  width: max(100%, var(--kanban-matrix-min-width));
 }
 
 .kanban-cell {
