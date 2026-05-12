@@ -1,0 +1,241 @@
+/* ===== Shell — App Chrome ===== */
+/* Topbar, navigation, toolbar, session controls, KPI dashboard */
+
+.app-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.bg-layer {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at 10% 15%, rgba(84, 142, 255, 0.45), transparent 42%),
+    radial-gradient(circle at 88% 12%, rgba(145, 96, 255, 0.42), transparent 46%),
+    radial-gradient(circle at 80% 82%, rgba(84, 205, 193, 0.28), transparent 44%),
+    radial-gradient(circle at 15% 86%, rgba(255, 168, 96, 0.16), transparent 40%),
+    linear-gradient(130deg, #0a1020 0%, #111936 45%, #141e3d 100%);
+  filter: saturate(0.88);
+  z-index: 0;
+}
+
+.cockpit-wrap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.topbar {
+  padding: 16px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid rgba(155, 183, 244, 0.2);
+  background:
+    radial-gradient(circle at 0% -80%, rgba(83, 148, 255, 0.24), transparent 46%),
+    radial-gradient(circle at 100% 140%, rgba(66, 217, 187, 0.14), transparent 42%),
+    linear-gradient(120deg, rgba(14, 23, 49, 0.88), rgba(10, 17, 39, 0.82));
+  box-shadow:
+    0 0 0 1px rgba(152, 187, 255, 0.1) inset,
+    0 16px 34px rgba(5, 10, 25, 0.42);
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(21px, 2.1vw, 31px);
+  letter-spacing: 0.3px;
+  color: #f4f8ff;
+  text-shadow: 0 6px 20px rgba(83, 150, 255, 0.26);
+}
+
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(114, 145, 255, 0.52));
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  color: #a8bedf;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+}
+
+.top-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 7px;
+  border-radius: 18px;
+  border: 1px solid rgba(164, 191, 255, 0.28);
+  background:
+    linear-gradient(146deg, rgba(11, 20, 43, 0.9), rgba(16, 28, 59, 0.72)),
+    radial-gradient(circle at 20% -50%, rgba(95, 148, 255, 0.32), transparent 54%);
+  box-shadow:
+    0 0 0 1px rgba(148, 183, 255, 0.14) inset,
+    0 12px 26px rgba(6, 12, 30, 0.35);
+}
+
+.top-nav-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #cfdef9;
+  border-radius: 12px;
+  min-height: 40px;
+  padding: 9px 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: color 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.top-nav-btn:hover {
+  color: #f2f7ff;
+  background: rgba(44, 67, 118, 0.48);
+  border-color: rgba(167, 196, 255, 0.36);
+  transform: translateY(-1px);
+}
+
+.top-nav-btn:focus-visible {
+  outline: none;
+  border-color: rgba(141, 228, 255, 0.86);
+  box-shadow: 0 0 0 2px rgba(99, 212, 255, 0.28);
+}
+
+.top-nav-btn-active {
+  color: #fcfeff;
+  border-color: rgba(123, 207, 255, 0.72);
+  background: linear-gradient(132deg, rgba(78, 134, 249, 0.8), rgba(77, 193, 167, 0.72));
+  box-shadow:
+    0 12px 26px rgba(19, 58, 130, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.top-nav-btn-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.top-nav-btn-label {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.1;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.session-switcher {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.session-select {
+  border: 1px solid rgba(164, 182, 255, 0.35);
+  background: rgba(24, 34, 66, 0.72);
+  color: #eef2ff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  min-height: 36px;
+  max-width: 360px;
+}
+
+.session-new-btn {
+  border: 1px solid rgba(160, 188, 255, 0.45);
+  background: linear-gradient(130deg, rgba(88, 134, 239, 0.7), rgba(109, 198, 183, 0.72));
+  color: #071228;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.session-clear-btn {
+  border: 1px solid rgba(255, 172, 172, 0.42);
+  background: linear-gradient(130deg, rgba(175, 74, 100, 0.72), rgba(214, 111, 93, 0.72));
+  color: #fff1f1;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.session-clear-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.session-new-btn:hover {
+  filter: brightness(1.06);
+}
+
+.session-chip {
+  border: 1px solid rgba(164, 182, 255, 0.35);
+  background: rgba(24, 34, 66, 0.72);
+  color: #eef2ff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── KPI Dashboard ──────────────────────────────────────── */
+
+.kpi-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.kpi-value {
+  margin-top: 6px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.kpi-corner {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  margin: 0;
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  z-index: 2;
+}
+
+.kpi-mini {
+  border-radius: 10px;
+  padding: 8px;
+  background: linear-gradient(130deg, rgba(47, 64, 115, 0.45), rgba(24, 35, 68, 0.65));
+  border: 1px solid rgba(161, 182, 255, 0.16);
+}
