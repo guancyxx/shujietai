@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 from app.services.dispatch_service import DispatchService
 from app.services.dispatch_worker import DispatchWorkerPool
 
 logger = logging.getLogger(__name__)
+
+# Throttle: only log tick failures at most every N seconds to avoid log spam.
+_ERROR_LOG_INTERVAL_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,8 @@ async def run_pending_execution_loop(
     if not config.enabled:
         return
 
+    _last_error_log_at = 0.0
+
     while True:
         try:
             process_pending_execution_once(
@@ -39,7 +45,10 @@ async def run_pending_execution_loop(
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.exception("Pending-execution worker tick failed: %s", exc)
+            now = time.monotonic()
+            if now - _last_error_log_at >= _ERROR_LOG_INTERVAL_SECONDS:
+                logger.exception("Pending-execution worker tick failed: %s", exc)
+                _last_error_log_at = now
         await asyncio.sleep(config.loop_interval_seconds)
 
 
