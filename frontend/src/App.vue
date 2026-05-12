@@ -320,8 +320,8 @@ const taskBoardStatusOptions = [
   { value: 'pending_execution', label: '待执行' },
   { value: 'in_progress', label: '进行中' },
   { value: 'blocked', label: '阻塞' },
-  { value: 'completed', label: '已完成' },
   { value: 'cancelled', label: '取消' },
+  { value: 'completed', label: '已完成' },
 ]
 
 const taskBoardStatusLabelMap = {
@@ -380,8 +380,8 @@ const filteredTaskBoardItems = computed(() => {
   })
 })
 
-// Matrix board: 2-level rows — L1=project (collapsible), L2=priority group (collapsible)
-const KANBAN_STATUSES = ['draft', 'pending_execution', 'in_progress', 'blocked', 'completed', 'cancelled']
+const KANBAN_STATUSES = ['draft', 'pending_execution', 'in_progress', 'blocked', 'cancelled', 'completed']
+const COLLAPSIBLE_KANBAN_STATUSES = ['completed']
 const KANBAN_PRIORITY_LABELS = { 1: 'P0', 2: 'P1', 3: 'P2', 4: 'P3' }
 const KANBAN_PRIORITY_ORDER = [1, 2, 3, 4]
 
@@ -524,6 +524,29 @@ const taskBoardMatrix = computed(() => {
 
 const collapsedProjectRows = ref(new Set())
 const collapsedTaskNodes = ref(new Set())
+const collapsedKanbanStatuses = ref(new Set(['completed']))
+
+const kanbanGridTemplate = computed(() => [
+  '180px',
+  ...KANBAN_STATUSES.map((status) => (
+    collapsedKanbanStatuses.value.has(status) ? 'minmax(72px, 0.35fr)' : 'minmax(150px, 1fr)'
+  )),
+].join(' '))
+
+function isKanbanStatusCollapsible(status) {
+  return COLLAPSIBLE_KANBAN_STATUSES.includes(status)
+}
+
+function isKanbanStatusCollapsed(status) {
+  return collapsedKanbanStatuses.value.has(status)
+}
+
+function toggleKanbanStatusColumn(status) {
+  if (!isKanbanStatusCollapsible(status)) return
+  const next = new Set(collapsedKanbanStatuses.value)
+  if (next.has(status)) { next.delete(status) } else { next.add(status) }
+  collapsedKanbanStatuses.value = next
+}
 
 function toggleProjectRow(projectId) {
   const s = new Set(collapsedProjectRows.value)
@@ -2250,11 +2273,21 @@ onUnmounted(() => {
 
           <!-- Matrix Kanban: columns=statuses, rows=projects; cards render parent/child task trees -->
           <div class="kanban-matrix-wrap">
-            <div class="kanban-matrix-header">
+            <div class="kanban-matrix-header" :style="{ gridTemplateColumns: kanbanGridTemplate }">
               <div class="kanban-row-label-head"></div>
-              <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-col-header" :class="'kanban-col-' + s">
+              <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-col-header" :class="['kanban-col-' + s, { 'kanban-col-collapsed': isKanbanStatusCollapsed(s) }]">
                 <span class="kanban-status-dot" :class="'task-status-' + s"></span>
-                {{ taskBoardStatusLabelMap[s] }}
+                <span class="kanban-col-title">{{ taskBoardStatusLabelMap[s] }}</span>
+                <button
+                  v-if="isKanbanStatusCollapsible(s)"
+                  type="button"
+                  class="kanban-col-toggle"
+                  :aria-label="isKanbanStatusCollapsed(s) ? '展开已完成列' : '折叠已完成列'"
+                  :title="isKanbanStatusCollapsed(s) ? '展开已完成列' : '折叠已完成列'"
+                  @click.stop="toggleKanbanStatusColumn(s)"
+                >
+                  {{ isKanbanStatusCollapsed(s) ? '◀' : '▶' }}
+                </button>
               </div>
             </div>
             <template v-if="taskBoardMatrix.length > 0">
@@ -2266,18 +2299,30 @@ onUnmounted(() => {
                     <span class="kanban-project-count muted">{{ project.taskCount }} 项</span>
                   </button>
                 </div>
-                <div v-if="!collapsedProjectRows.has(project.id)" class="kanban-row-columns">
+                <div v-if="!collapsedProjectRows.has(project.id)" class="kanban-row-columns" :style="{ gridTemplateColumns: kanbanGridTemplate }">
                   <div class="kanban-row-spacer"></div>
                   <div
                     v-for="s in KANBAN_STATUSES"
                     :key="s"
                     class="kanban-cell"
-                    :class="{ 'kanban-cell-drop-active': draggingTaskBoardItemId }"
-                    @dragover.prevent
-                    @drop.prevent="handleTaskBoardDrop(s, $event)"
+                    :class="{ 'kanban-cell-drop-active': draggingTaskBoardItemId && !isKanbanStatusCollapsed(s), 'kanban-cell-collapsed': isKanbanStatusCollapsed(s) }"
+                    @dragover.prevent="!isKanbanStatusCollapsed(s)"
+                    @drop.prevent="!isKanbanStatusCollapsed(s) && handleTaskBoardDrop(s, $event)"
                   >
-                    <div v-if="project.columns[s].length === 0" class="kanban-cell-empty">拖到这里</div>
-                    <template v-for="item in project.columns[s]" :key="item.id">
+                    <button
+                      v-if="isKanbanStatusCollapsed(s)"
+                      type="button"
+                      class="kanban-collapsed-summary"
+                      :aria-label="`展开${taskBoardStatusLabelMap[s]}列，当前有${countTaskTreeNodes(project.columns[s])}项`"
+                      :title="`展开${taskBoardStatusLabelMap[s]}列`"
+                      @click="toggleKanbanStatusColumn(s)"
+                    >
+                      <span class="kanban-collapsed-count">{{ countTaskTreeNodes(project.columns[s]) }}</span>
+                      <span class="kanban-collapsed-label">项</span>
+                    </button>
+                    <template v-else>
+                      <div v-if="project.columns[s].length === 0" class="kanban-cell-empty">拖到这里</div>
+                      <template v-for="item in project.columns[s]" :key="item.id">
                       <div
                         class="task-board-card"
                         :class="{ 'task-board-card-dragging': draggingTaskBoardItemId === item.id, 'task-board-card-highlighted': highlightedTaskBoardItemId === item.id }"
@@ -2340,6 +2385,7 @@ onUnmounted(() => {
                           </template>
                         </div>
                       </div>
+                      </template>
                     </template>
                   </div>
                 </div>

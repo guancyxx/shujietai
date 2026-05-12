@@ -3181,10 +3181,9 @@ details[open] .thinking-summary::before {
   gap: 0;
 }
 
-/* Header row: empty label + status columns */
 .kanban-matrix-header {
   display: grid;
-  grid-template-columns: 180px repeat(5, minmax(160px, 1fr));
+  min-width: 1080px;
   gap: 0;
   position: sticky;
   top: 0;
@@ -3198,6 +3197,7 @@ details[open] .thinking-summary::before {
 }
 
 .kanban-col-header {
+  min-width: 0;
   padding: 10px 12px;
   font-size: 12px;
   font-weight: 600;
@@ -3208,6 +3208,41 @@ details[open] .thinking-summary::before {
   border-left: 1px solid rgba(100, 140, 220, 0.1);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.kanban-col-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kanban-col-collapsed {
+  justify-content: center;
+  padding-inline: 8px;
+}
+
+.kanban-col-collapsed .kanban-col-title {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.1em;
+}
+
+.kanban-col-toggle {
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(124, 197, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(13, 24, 52, 0.72);
+  color: #bfe7ff;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.kanban-col-toggle:hover,
+.kanban-col-toggle:focus-visible {
+  outline: none;
+  border-color: rgba(124, 220, 255, 0.58);
+  color: #f4fbff;
 }
 
 .kanban-status-dot {
@@ -3217,7 +3252,6 @@ details[open] .thinking-summary::before {
   flex-shrink: 0;
 }
 
-/* Each project row */
 .kanban-project-row {
   border-bottom: 1px solid rgba(100, 140, 220, 0.1);
 }
@@ -3232,11 +3266,14 @@ details[open] .thinking-summary::before {
   cursor: pointer;
   background: rgba(17, 28, 56, 0.6);
   user-select: none;
+  border: 0;
   border-right: 1px solid rgba(100, 140, 220, 0.12);
   transition: background 0.15s;
 }
 
-.kanban-row-header:hover {
+.kanban-row-header:hover,
+.kanban-row-header:focus-visible {
+  outline: none;
   background: rgba(30, 50, 100, 0.7);
 }
 
@@ -3267,17 +3304,17 @@ details[open] .thinking-summary::before {
 
 .kanban-project-count {
   font-size: 11px;
-  color: #557;
+  color: #8fa7c4;
   flex-shrink: 0;
 }
 
-/* The columns row (when expanded) */
 .kanban-row-columns {
   display: grid;
-  grid-template-columns: 180px repeat(5, minmax(160px, 1fr));
+  min-width: 1080px;
 }
 
 .kanban-cell {
+  min-width: 0;
   padding: 8px;
   border-left: 1px solid rgba(100, 140, 220, 0.08);
   display: flex;
@@ -3292,6 +3329,43 @@ details[open] .thinking-summary::before {
   box-shadow: 0 0 0 1px rgba(111, 186, 255, 0.18) inset;
 }
 
+.kanban-cell-collapsed {
+  align-items: stretch;
+  justify-content: center;
+  padding-inline: 6px;
+}
+
+.kanban-collapsed-summary {
+  width: 100%;
+  min-height: 58px;
+  border: 1px dashed rgba(88, 227, 176, 0.34);
+  border-radius: 12px;
+  background: rgba(26, 108, 82, 0.1);
+  color: #9ef7d0;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+}
+
+.kanban-collapsed-summary:hover,
+.kanban-collapsed-summary:focus-visible {
+  outline: none;
+  border-color: rgba(88, 227, 176, 0.62);
+  background: rgba(26, 108, 82, 0.18);
+}
+
+.kanban-collapsed-count {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.kanban-collapsed-label {
+  font-size: 11px;
+  color: rgba(190, 255, 226, 0.72);
+}
+
 .kanban-cell-empty {
   color: rgba(140, 160, 200, 0.38);
   font-size: 12px;
@@ -3299,7 +3373,6 @@ details[open] .thinking-summary::before {
   padding-top: 4px;
 }
 
-/* Compact card styles for matrix cells */
 .task-board-desc-compact {
   font-size: 12px;
   color: #7a99c8;
@@ -3328,20 +3401,20 @@ details[open] .thinking-summary::before {
   background: none;
 }
 
-/* Status dot colors */
 .task-status-draft { background: #5577aa; }
+.task-status-pending_execution { background: #d8a928; }
 .task-status-in_progress { background: #44aadd; }
 .task-status-blocked { background: #dd6644; }
-.task-status-completed { background: #44bb77; }
 .task-status-cancelled { background: #556677; }
+.task-status-completed { background: #44bb77; }
 
-/* Responsive: collapse to scroll on small screens */
 @media (max-width: 900px) {
   .kanban-matrix-header,
   .kanban-row-columns {
-    grid-template-columns: 140px repeat(5, minmax(140px, 1fr));
+    min-width: 940px;
   }
-  .kanban-row-header {
+  .kanban-row-header,
+  .kanban-row-spacer {
     width: 140px;
     min-width: 140px;
   }
