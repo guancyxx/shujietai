@@ -630,6 +630,7 @@ const runtimeSummary = computed(() => {
     availableSkills: runtime?.available_skills ?? [],
     availableSkillItems: skillItems,
     availableMcpServers: runtime?.available_mcp_servers ?? [],
+    availablePlatforms: runtime?.available_platforms ?? ['hermes'],
     selectedModelText: selectedModel.value || '-',
     selectedSkillsText: selectedSkills.value.length > 0 ? selectedSkills.value.join(' · ') : '-',
     selectedMcpText: selectedMcpServers.value.length > 0 ? selectedMcpServers.value.join(' · ') : '-',
@@ -670,8 +671,11 @@ const modelProviderOptions = computed(() => {
 })
 
 const blankChatProviders = computed(() => {
-  const values = new Set(modelRuntimeCatalog.value.availableModelItems.map((item) => item.provider || ''))
-  return Array.from(values).filter(Boolean).sort()
+  const values = new Set(['hermes'])
+  for (const platform of runtimeSummary.value.availablePlatforms) {
+    if (platform) values.add(platform)
+  }
+  return Array.from(values).sort()
 })
 
 const filteredModelItems = computed(() => {
@@ -897,9 +901,8 @@ function activateBlankChat() {
   isBlankChatMode.value = true
   clearActiveTask()
   timeline.value = { messages: [], events: [] }
-  // Initialize provider if not set
-  if (!blankChatProvider.value && blankChatProviders.value.length > 0) {
-    blankChatProvider.value = blankChatProviders.value[0]
+  if (!blankChatProvider.value || !blankChatProviders.value.includes(blankChatProvider.value)) {
+    blankChatProvider.value = blankChatProviders.value.includes('hermes') ? 'hermes' : blankChatProviders.value[0]
   }
 }
 
@@ -1780,7 +1783,7 @@ async function sendMessageToHermes() {
         composerText.value = ''
         if (!wsConnected.value) wsConnect()
         await createDispatchTask({
-          aiPlatform: 'hermes',
+          aiPlatform: blankChatProvider.value || 'hermes',
           initialPrompt: trimmed,
           model: selectedModel.value || '',
           skills: [...selectedSkills.value],
@@ -1803,17 +1806,9 @@ async function sendMessageToHermes() {
   }
 }
 
-// When blank chat provider changes, auto-select a model from that provider
-watch(blankChatProvider, (newProvider) => {
-  if (!newProvider) return
-  const items = modelRuntimeCatalog.value.availableModelItems
-  const providerModels = items.filter((item) => item.provider === newProvider)
-  if (providerModels.length > 0) {
-    // Select the first model from this provider, or the one already matching
-    const currentProvider = items.find((item) => item.name === selectedModel.value)?.provider
-    if (currentProvider !== newProvider) {
-      selectedModel.value = providerModels[0].name
-    }
+watch(blankChatProviders, (providers) => {
+  if (!providers.includes(blankChatProvider.value)) {
+    blankChatProvider.value = providers.includes('hermes') ? 'hermes' : providers[0]
   }
 })
 
@@ -1947,7 +1942,7 @@ onUnmounted(() => {
             <div class="pinned-ai-icon">🤖</div>
             <div class="pinned-ai-body">
               <div class="pinned-ai-title">AI Assistant</div>
-              <div class="pinned-ai-subtitle">Quick chat — no history loaded</div>
+              <div class="pinned-ai-subtitle">AI provider: {{ blankChatProvider || 'hermes' }}</div>
             </div>
             <select
               v-if="blankChatProviders.length > 1"
