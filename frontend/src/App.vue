@@ -59,6 +59,9 @@ const isTaskBoardEditModalOpen = ref(false)
 const creatingTaskBoardItem = ref(false)
 const updatingTaskBoardItem = ref(false)
 const deletingTaskBoardItemId = ref('')
+const quickUpdatingTaskBoardItemId = ref('')
+const draggingTaskBoardItemId = ref('')
+const taskBoardDetailItem = ref(null)
 const startingConversationFromTask = ref(false)
 const streamingContent = ref('')        // Current streaming assistant message content
 const isStreaming = ref(false)           // Whether a stream is in progress
@@ -1400,6 +1403,81 @@ function closeTaskBoardEditModal() {
   editingTaskBoardItemId.value = ''
 }
 
+function openTaskBoardDetailModal(item) {
+  taskBoardDetailItem.value = item
+}
+
+function closeTaskBoardDetailModal() {
+  taskBoardDetailItem.value = null
+}
+
+function taskBoardDetailField(value) {
+  const normalized = String(value || '').trim()
+  return normalized || '-'
+}
+
+function buildTaskBoardUpdatePayload(item, patch) {
+  return {
+    name: item.name,
+    description: item.description || '',
+    ai_platform: item.ai_platform || 'hermes',
+    status: item.status || 'draft',
+    priority: item.priority ?? 3,
+    project_id: item.project_id || null,
+    upstream_task_id: item.upstream_task_id || null,
+    parent_task_id: item.parent_task_id || null,
+    ...patch,
+  }
+}
+
+async function updateTaskBoardItemQuick(item, patch) {
+  if (!item?.id || quickUpdatingTaskBoardItemId.value === item.id) {
+    return
+  }
+  quickUpdatingTaskBoardItemId.value = item.id
+  errorMessage.value = ''
+  try {
+    const updated = await patchJson(`${apiBase}/api/v1/task-board/${item.id}`, buildTaskBoardUpdatePayload(item, patch))
+    taskBoardItems.value = taskBoardItems.value.map((entry) => (entry.id === item.id ? updated : entry))
+    if (taskBoardDetailItem.value?.id === item.id) {
+      taskBoardDetailItem.value = updated
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
+  } finally {
+    quickUpdatingTaskBoardItemId.value = ''
+  }
+}
+
+function handleTaskBoardDragStart(item, event) {
+  if (!item?.id) return
+  draggingTaskBoardItemId.value = item.id
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', item.id)
+}
+
+function handleTaskBoardDragEnd() {
+  draggingTaskBoardItemId.value = ''
+}
+
+async function handleTaskBoardDrop(status, event) {
+  const taskId = event.dataTransfer.getData('text/plain') || draggingTaskBoardItemId.value
+  draggingTaskBoardItemId.value = ''
+  const item = taskBoardItems.value.find((entry) => entry.id === taskId)
+  if (!item || item.status === status) {
+    return
+  }
+  await updateTaskBoardItemQuick(item, { status })
+}
+
+async function updateTaskBoardPriority(item, event) {
+  const priority = Number(event.target.value)
+  if (!item || !Number.isInteger(priority) || item.priority === priority) {
+    return
+  }
+  await updateTaskBoardItemQuick(item, { priority })
+}
+
 function buildTaskBoardPayload(formState) {
   return {
     name: formState.name.trim(),
@@ -2077,15 +2155,41 @@ onUnmounted(() => {
                     <!-- L3: status columns (hidden when priority row collapsed) -->
                     <div v-if="!collapsedPriorityRows.has(group.id)" class="kanban-row-columns">
                       <div class="kanban-row-spacer"></div>
-                      <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-cell">
-                        <div v-if="group.columns[s].length === 0" class="kanban-cell-empty">—</div>
-                        <div v-for="item in group.columns[s]" :key="item.id" class="task-board-card">
+                      <div
+                        v-for="s in KANBAN_STATUSES"
+                        :key="s"
+                        class="kanban-cell"
+                        :class="{ 'kanban-cell-drop-active': draggingTaskBoardItemId }"
+                        @dragover.prevent
+                        @drop.prevent="handleTaskBoardDrop(s, $event)"
+                      >
+                        <div v-if="group.columns[s].length === 0" class="kanban-cell-empty">拖到这里</div>
+                        <div
+                          v-for="item in group.columns[s]"
+                          :key="item.id"
+                          class="task-board-card"
+                          :class="{ 'task-board-card-dragging': draggingTaskBoardItemId === item.id }"
+                          draggable="true"
+                          @dragstart="handleTaskBoardDragStart(item, $event)"
+                          @dragend="handleTaskBoardDragEnd"
+                        >
                           <div class="task-board-card-top">
                             <div class="task-board-title-wrap">
                               <div class="task-board-name">{{ item.name }}</div>
                             </div>
                             <div class="task-board-card-actions">
-                              <span :class="['priority-badge', `priority-P${item.priority || 3}`]">{{ taskBoardPriorityLabelMap[item.priority || 3] || 'P2' }}</span>
+                              <select
+                                class="priority-badge priority-select"
+                                :class="`priority-P${item.priority || 3}`"
+                                :value="item.priority || 3"
+                                :disabled="quickUpdatingTaskBoardItemId === item.id"
+                                aria-label="调整任务优先级"
+                                @change.stop="updateTaskBoardPriority(item, $event)"
+                                @click.stop
+                              >
+                                <option v-for="opt in taskBoardPriorityOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                              </select>
+                              <button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(item)">详情</button>
                               <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
                               <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
                               <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click.stop="deleteTaskBoardItem(item)">{{ deletingTaskBoardItemId === item.id ? '...' : '删除' }}</button>
@@ -2686,6 +2790,42 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <div v-if="taskBoardDetailItem" class="picker-modal-overlay" @click.self="closeTaskBoardDetailModal">
+      <div class="picker-modal panel task-detail-modal">
+        <div class="picker-modal-header task-detail-header">
+          <div>
+            <h3>{{ taskBoardDetailItem.name }}</h3>
+            <div class="task-detail-subtitle">
+              <span :class="['task-board-status-pill', taskBoardStatusClass(taskBoardDetailItem.status)]">{{ taskBoardStatusLabelMap[taskBoardDetailItem.status] || taskBoardDetailItem.status }}</span>
+              <span :class="['priority-badge', `priority-P${taskBoardDetailItem.priority || 3}`]">{{ taskBoardPriorityLabelMap[taskBoardDetailItem.priority || 3] || 'P2' }}</span>
+            </div>
+          </div>
+          <button type="button" class="picker-close-btn" @click="closeTaskBoardDetailModal" aria-label="关闭"><span class="close-icon" aria-hidden="true">✕</span></button>
+        </div>
+
+        <div class="task-detail-body scrollbar-themed">
+          <section class="task-detail-section">
+            <h4>任务描述</h4>
+            <div v-if="taskBoardDetailItem.description" class="task-detail-markdown" v-html="renderMarkdown(taskBoardDetailItem.description)"></div>
+            <div v-else class="muted">暂无描述</div>
+          </section>
+          <section class="task-detail-grid">
+            <div><span>项目</span><strong>{{ taskBoardDetailField(taskBoardDetailItem.project_name) }}</strong></div>
+            <div><span>AI 平台</span><strong>{{ taskBoardDetailField(taskBoardDetailItem.ai_platform) }}</strong></div>
+            <div><span>上游任务</span><strong>{{ taskBoardDetailField(taskBoardDetailItem.upstream_task_id) }}</strong></div>
+            <div><span>父任务</span><strong>{{ taskBoardDetailField(taskBoardDetailItem.parent_task_id) }}</strong></div>
+            <div><span>创建时间</span><strong>{{ formatSessionTime(taskBoardDetailItem.created_at) }}</strong></div>
+            <div><span>更新时间</span><strong>{{ formatSessionTime(taskBoardDetailItem.updated_at) }}</strong></div>
+          </section>
+        </div>
+
+        <div class="picker-actions">
+          <button type="button" class="picker-btn ghost" @click="closeTaskBoardDetailModal">关闭</button>
+          <button type="button" class="picker-btn" @click="openTaskBoardEditModal(taskBoardDetailItem)">编辑任务</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="isTaskBoardEditModalOpen" class="picker-modal-overlay" @click.self="closeTaskBoardEditModal">
       <div class="picker-modal panel create-conversation-modal">
         <div class="picker-modal-header">
@@ -2701,7 +2841,7 @@ onUnmounted(() => {
 
           <label class="create-field">
             <span class="create-field-label">任务描述</span>
-            <textarea v-model="taskBoardEditForm.description" class="create-initial-message" :disabled="updatingTaskBoardItem" placeholder="请输入任务描述"></textarea>
+            <textarea v-model="taskBoardEditForm.description" class="create-initial-message task-description-editor" :disabled="updatingTaskBoardItem" placeholder="请输入任务描述（支持长段落/Markdown）"></textarea>
           </label>
 
           <label class="create-field">
