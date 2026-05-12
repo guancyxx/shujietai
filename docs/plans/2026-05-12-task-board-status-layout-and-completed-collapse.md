@@ -23,6 +23,7 @@ Fix the task-board matrix layout after adding the pending-execution status, keep
 
 - Use one source of truth for status order: `KANBAN_STATUSES`.
 - Derive the matrix grid template from the same status array and collapsed-column state instead of hard-coding `repeat(5, ...)`.
+- Give expanded columns enough width for task-card controls, and let the matrix scroll horizontally when the viewport is narrower than the board content instead of squeezing cards into unreadable shapes.
 - Override inherited `.main-grid` behavior at the page-specific `.task-board-grid` level and force the board panel to span `grid-column: 1 / -1`; this prevents future generic breakpoint rules from shrinking the board to the first chat-style column.
 - Limit column collapse to `completed` for now because this is the noisy terminal bucket requested by the user.
 - Keep the collapsed column keyboard-accessible with a real button in the header.
