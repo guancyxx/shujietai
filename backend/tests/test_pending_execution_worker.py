@@ -31,8 +31,16 @@ def test_pending_execution_worker_starts_dispatch_once_and_marks_in_progress() -
     )
     pool = _FakeWorkerPool()
 
-    first_count = process_pending_execution_once(dispatch_service=dispatch_service, worker_pool=pool)
-    second_count = process_pending_execution_once(dispatch_service=dispatch_service, worker_pool=pool)
+    first_count = process_pending_execution_once(
+        dispatch_service=dispatch_service,
+        worker_pool=pool,
+        ingest_fn=store.ingest,
+    )
+    second_count = process_pending_execution_once(
+        dispatch_service=dispatch_service,
+        worker_pool=pool,
+        ingest_fn=store.ingest,
+    )
 
     assert first_count == 1
     assert second_count == 0
@@ -41,6 +49,15 @@ def test_pending_execution_worker_starts_dispatch_once_and_marks_in_progress() -
     updated = store.list_task_board_items()[0]
     assert str(updated.id) == str(task_board_item.id)
     assert updated.status == "in_progress"
+
+    # Verify session record was created for the auto-started conversation
+    sessions = store.list_sessions()
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session.platform == "hermes"
+    assert session.external_session_id is not None
+    assert "task_board_" in session.external_session_id
+    assert session.title == task_board_item.name
 
 
 def test_pending_execution_worker_reuses_existing_active_dispatch() -> None:
@@ -56,9 +73,41 @@ def test_pending_execution_worker_reuses_existing_active_dispatch() -> None:
     assert existing is not None
     pool = _FakeWorkerPool()
 
-    started_count = process_pending_execution_once(dispatch_service=dispatch_service, worker_pool=pool)
+    started_count = process_pending_execution_once(
+        dispatch_service=dispatch_service,
+        worker_pool=pool,
+        ingest_fn=store.ingest,
+    )
 
     assert started_count == 0
     assert pool.started_task_ids == [existing.id]
     assert len(dispatch_service.list_tasks()) == 1
     assert store.list_task_board_items()[0].status == "in_progress"
+
+    # Verify session was created even for reused active dispatch
+    sessions = store.list_sessions()
+    assert len(sessions) == 1
+    assert sessions[0].external_session_id is not None
+
+
+def test_pending_execution_worker_no_ingest_fn_still_works() -> None:
+    """Backward compatibility: worker works without ingest_fn (no session created)."""
+    store, dispatch_service = _make_services()
+    store.create_task_board_item(
+        TaskBoardCreateRequest(
+            name="No ingest test",
+            description="Should still start dispatch.",
+            status="pending_execution",
+        )
+    )
+    pool = _FakeWorkerPool()
+
+    count = process_pending_execution_once(
+        dispatch_service=dispatch_service,
+        worker_pool=pool,
+    )
+
+    assert count == 1
+    assert len(pool.started_task_ids) == 1
+    # No session was created (ingest_fn was None)
+    assert len(store.list_sessions()) == 0

@@ -149,6 +149,7 @@ async def lifespan(app_instance: FastAPI):
                     dispatch_service=dispatch_service,
                     worker_pool=worker_pool,
                     config=pending_config,
+                    ingest_fn=store.ingest,
                 ),
                 name="pending-execution-worker",
             )
