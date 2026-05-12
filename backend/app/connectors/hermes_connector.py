@@ -223,11 +223,11 @@ class HermesConnector:
                 )
                 if resp.status_code != 202:
                     body = resp.text[:500]
-                    yield {"type": "error", "error": f"hermes_runs_start_error_{resp.status_code}: {body}"}
+                    yield {"type": "error", "error": f"hermes_start_error_{resp.status_code}: {body}"}
                     return
                 run_id = resp.json().get("run_id")
         except Exception as exc:
-            yield {"type": "error", "error": f"hermes_runs_start_exception: {exc}"}
+            yield {"type": "error", "error": f"hermes_start_exception: {exc}"}
             return
 
         if not run_id:
@@ -246,7 +246,7 @@ class HermesConnector:
                 ) as stream:
                     if stream.status_code != 200:
                         body = (await stream.aread()).decode(errors="replace")[:500]
-                        yield {"type": "error", "error": f"hermes_runs_events_error_{stream.status_code}: {body}"}
+                        yield {"type": "error", "error": f"hermes_events_error_{stream.status_code}: {body}"}
                         return
 
                     async for line in stream.aiter_lines():
@@ -288,16 +288,16 @@ class HermesConnector:
 
                         elif etype in ("run.failed", "run.cancelled"):
                             error_msg = event.get("error") or etype
-                            yield {"type": "error", "error": f"hermes_runs_{etype}: {error_msg}"}
+                            yield {"type": "error", "error": f"hermes_{etype}: {error_msg}"}
                             return
 
         except httpx.RemoteProtocolError as exc:
             # SSE stream closed by server — treated as normal finish if we
             # already got run.completed; otherwise it is an error.
-            yield {"type": "error", "error": f"hermes_runs_stream_closed: {exc}"}
+            yield {"type": "error", "error": f"hermes_stream_closed: {exc}"}
         except Exception as exc:
             logger.exception("[hermes] run %s stream error", run_id)
-            yield {"type": "error", "error": f"hermes_runs_stream_exception: {exc}"}
+            yield {"type": "error", "error": f"hermes_stream_exception: {exc}"}
 
 
 # Satisfy the StreamingAIConnector protocol at import time.
