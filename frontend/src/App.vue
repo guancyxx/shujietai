@@ -2330,7 +2330,7 @@ onUnmounted(() => {
           <!-- Matrix Kanban: columns=statuses, rows=projects; cards render parent/child task trees -->
           <div class="kanban-matrix-wrap">
             <div class="kanban-matrix-header" :style="kanbanMatrixStyle">
-              <div class="kanban-row-label-head"></div>
+              <div class="kanban-row-label-head">项目</div>
               <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-col-header" :class="['kanban-col-' + s, { 'kanban-col-collapsed': isKanbanStatusCollapsed(s) }]">
                 <span class="kanban-status-dot" :class="'task-status-' + s"></span>
                 <span class="kanban-col-title">{{ taskBoardStatusLabelMap[s] }}</span>

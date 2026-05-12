@@ -1,15 +1,16 @@
 /* ===== Kanban Matrix Board ===== */
 .kanban-matrix-wrap {
   min-height: 0;
+  max-width: 100%;
   overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 0;
   --kanban-expanded-columns: 6;
   --kanban-collapsed-columns: 0;
-  --kanban-label-track: minmax(clamp(8rem, 14vw, 12rem), 0.55fr);
-  --kanban-expanded-track: minmax(clamp(11rem, 14vw, 17rem), 1fr);
-  --kanban-collapsed-track: minmax(3.5rem, 0.18fr);
+  --kanban-label-track: minmax(clamp(8rem, 13vw, 11rem), 0.52fr);
+  --kanban-expanded-track: minmax(clamp(10rem, 12vw, 14rem), 1fr);
+  --kanban-collapsed-track: minmax(4.4rem, 0.22fr);
 }
 
 .kanban-matrix-header {
@@ -18,7 +19,8 @@
     var(--kanban-label-track)
     repeat(var(--kanban-expanded-columns), var(--kanban-expanded-track))
     repeat(var(--kanban-collapsed-columns), var(--kanban-collapsed-track));
-  min-width: max-content;
+  min-width: 100%;
+  width: max-content;
   gap: 0;
   position: sticky;
   top: 0;
@@ -29,6 +31,13 @@
 
 .kanban-row-label-head {
   padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #8fadd8;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .kanban-col-header {
@@ -57,8 +66,12 @@
 }
 
 .kanban-col-collapsed .kanban-col-title {
-  writing-mode: vertical-rl;
-  letter-spacing: 0.1em;
+  writing-mode: horizontal-tb;
+  letter-spacing: 0.02em;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+  text-align: center;
 }
 
 .kanban-col-toggle {
@@ -139,7 +152,8 @@
     var(--kanban-label-track)
     repeat(var(--kanban-expanded-columns), var(--kanban-expanded-track))
     repeat(var(--kanban-collapsed-columns), var(--kanban-collapsed-track));
-  min-width: max-content;
+  min-width: 100%;
+  width: max-content;
 }
 
 .kanban-cell {
@@ -239,8 +253,9 @@
 
 @media (max-width: 900px) {
   .kanban-matrix-wrap {
-    --kanban-label-track: minmax(clamp(7rem, 28vw, 10rem), 0.5fr);
-    --kanban-expanded-track: minmax(clamp(10rem, 42vw, 15rem), 1fr);
+    --kanban-label-track: minmax(clamp(7rem, 26vw, 9.5rem), 0.5fr);
+    --kanban-expanded-track: minmax(clamp(9.5rem, 36vw, 12.5rem), 1fr);
+    --kanban-collapsed-track: minmax(4.2rem, 0.22fr);
   }
 }
 
