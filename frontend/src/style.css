@@ -3183,7 +3183,6 @@ details[open] .thinking-summary::before {
 
 .kanban-matrix-header {
   display: grid;
-  min-width: 1080px;
   gap: 0;
   position: sticky;
   top: 0;
@@ -3310,7 +3309,6 @@ details[open] .thinking-summary::before {
 
 .kanban-row-columns {
   display: grid;
-  min-width: 1080px;
 }
 
 .kanban-cell {
@@ -3409,10 +3407,6 @@ details[open] .thinking-summary::before {
 .task-status-completed { background: #44bb77; }
 
 @media (max-width: 900px) {
-  .kanban-matrix-header,
-  .kanban-row-columns {
-    min-width: 940px;
-  }
   .kanban-row-header,
   .kanban-row-spacer {
     width: 140px;
