@@ -6,20 +6,12 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  --kanban-expanded-columns: 6;
-  --kanban-collapsed-columns: 0;
-  --kanban-label-track: minmax(clamp(8rem, 13vw, 11rem), 0.52fr);
-  --kanban-expanded-track: minmax(clamp(10rem, 12vw, 14rem), 1fr);
-  --kanban-collapsed-track: minmax(4.4rem, 0.22fr);
 }
 
 .kanban-matrix-header {
   display: grid;
-  grid-template-columns:
-    var(--kanban-label-track)
-    repeat(var(--kanban-expanded-columns), var(--kanban-expanded-track))
-    repeat(var(--kanban-collapsed-columns), var(--kanban-collapsed-track));
-  min-width: 100%;
+  grid-template-columns: var(--kanban-grid-template);
+  min-width: max(100%, var(--kanban-matrix-min-width));
   width: max-content;
   gap: 0;
   position: sticky;
@@ -148,11 +140,8 @@
 
 .kanban-row-columns {
   display: grid;
-  grid-template-columns:
-    var(--kanban-label-track)
-    repeat(var(--kanban-expanded-columns), var(--kanban-expanded-track))
-    repeat(var(--kanban-collapsed-columns), var(--kanban-collapsed-track));
-  min-width: 100%;
+  grid-template-columns: var(--kanban-grid-template);
+  min-width: max(100%, var(--kanban-matrix-min-width));
   width: max-content;
 }
 
@@ -164,6 +153,8 @@
   flex-direction: column;
   gap: 6px;
   min-height: 64px;
+  align-self: stretch;
+  overflow: hidden;
   transition: background 160ms ease, box-shadow 160ms ease;
 }
 
@@ -252,10 +243,9 @@
 .task-status-completed { background: #44bb77; }
 
 @media (max-width: 900px) {
-  .kanban-matrix-wrap {
-    --kanban-label-track: minmax(clamp(7rem, 26vw, 9.5rem), 0.5fr);
-    --kanban-expanded-track: minmax(clamp(9.5rem, 36vw, 12.5rem), 1fr);
-    --kanban-collapsed-track: minmax(4.2rem, 0.22fr);
+  .kanban-matrix-header,
+  .kanban-row-columns {
+    min-width: max(100%, var(--kanban-matrix-min-width));
   }
 }
 

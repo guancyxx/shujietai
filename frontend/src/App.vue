@@ -486,17 +486,32 @@ const collapsedProjectRows = ref(new Set())
 const collapsedTaskNodes = ref(new Set())
 const collapsedKanbanStatuses = ref(new Set(['completed']))
 
-const kanbanExpandedColumnCount = computed(() => (
-  KANBAN_STATUSES.filter((status) => !collapsedKanbanStatuses.value.has(status)).length
+const KANBAN_LABEL_TRACK = 'minmax(clamp(8rem, 13vw, 11rem), 0.52fr)'
+const KANBAN_EXPANDED_TRACK = 'minmax(clamp(10rem, 12vw, 14rem), 1fr)'
+const KANBAN_COLLAPSED_TRACK = 'minmax(4.4rem, 0.22fr)'
+const KANBAN_LABEL_MIN_REM = 8
+const KANBAN_EXPANDED_MIN_REM = 10
+const KANBAN_COLLAPSED_MIN_REM = 4.4
+
+const kanbanGridTemplate = computed(() => (
+  [
+    KANBAN_LABEL_TRACK,
+    ...KANBAN_STATUSES.map((status) => (
+      collapsedKanbanStatuses.value.has(status) ? KANBAN_COLLAPSED_TRACK : KANBAN_EXPANDED_TRACK
+    )),
+  ].join(' ')
 ))
 
-const kanbanCollapsedColumnCount = computed(() => (
-  KANBAN_STATUSES.length - kanbanExpandedColumnCount.value
-))
+const kanbanMatrixMinWidth = computed(() => {
+  const statusTrackMinWidth = KANBAN_STATUSES.reduce((sum, status) => (
+    sum + (collapsedKanbanStatuses.value.has(status) ? KANBAN_COLLAPSED_MIN_REM : KANBAN_EXPANDED_MIN_REM)
+  ), 0)
+  return `${KANBAN_LABEL_MIN_REM + statusTrackMinWidth}rem`
+})
 
 const kanbanMatrixStyle = computed(() => ({
-  '--kanban-expanded-columns': String(kanbanExpandedColumnCount.value),
-  '--kanban-collapsed-columns': String(kanbanCollapsedColumnCount.value),
+  '--kanban-grid-template': kanbanGridTemplate.value,
+  '--kanban-matrix-min-width': kanbanMatrixMinWidth.value,
 }))
 
 function isKanbanStatusCollapsible(status) {
