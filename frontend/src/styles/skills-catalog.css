@@ -194,7 +194,7 @@
   border: 1px solid rgba(255,255,255,0.1);
   border-radius: 14px;
   padding: 28px 28px 24px;
-  max-width: 540px;
+  max-width: 760px;
   width: 100%;
   max-height: 80vh;
   overflow-y: auto;
@@ -292,10 +292,6 @@
   font-size: 0.85rem;
 }
 
-/* Expand modal width to show SKILL.md content comfortably */
-.skill-detail-modal {
-  max-width: 760px;
-}
 /* ── Skill Graph ──────────────────────────────────────── */
 .sg-view-switch {
   display: flex;
@@ -321,11 +317,5 @@
   height: 560px;
   display: flex;
   flex-direction: column;
-}
-
-.skills-catalog-panel {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
