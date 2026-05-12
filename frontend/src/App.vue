@@ -1993,12 +1993,12 @@ onUnmounted(() => {
               </button>
               <button
                 type="button"
-                class="conversation-delete-btn"
+                class="card-delete-btn conversation-delete-btn"
                 :aria-label="`删除对话 ${item.title}`"
                 :disabled="clearingSessions || deletingSessionId === item.id"
                 @click="deleteSession(item.id)"
               >
-                <span aria-hidden="true">🗑</span>
+                <span aria-hidden="true">×</span>
               </button>
             </div>
             <div v-if="sessions.length === 0" class="muted">暂无会话</div>
@@ -2129,8 +2129,8 @@ onUnmounted(() => {
                 </div>
                 <div class="project-card-actions">
                   <button type="button" class="project-btn" @click="openProjectEditModal(item)">编辑</button>
-                  <button type="button" class="project-btn project-btn-danger" :disabled="deletingProjectId === item.id" @click="deleteProject(item)">
-                    {{ deletingProjectId === item.id ? '删除中...' : '删除' }}
+                  <button type="button" class="card-delete-btn" :disabled="deletingProjectId === item.id" :aria-label="`删除项目 ${item.name}`" @click="deleteProject(item)">
+                    <span aria-hidden="true">×</span>
                   </button>
                 </div>
               </div>
@@ -2240,7 +2240,7 @@ onUnmounted(() => {
                             <button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(item)">详情</button>
                             <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
                             <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
-                            <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click.stop="deleteTaskBoardItem(item)">{{ deletingTaskBoardItemId === item.id ? '...' : '删除' }}</button>
+                            <button type="button" class="card-delete-btn" :disabled="deletingTaskBoardItemId === item.id" :aria-label="`删除任务 ${item.name}`" @click.stop="deleteTaskBoardItem(item)"><span aria-hidden="true">×</span></button>
                           </div>
                         </div>
                         <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>

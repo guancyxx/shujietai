@@ -99,29 +99,11 @@
 }
 
 .conversation-delete-btn {
-  border: 1px solid rgba(255, 172, 172, 0.35);
-  background: rgba(71, 29, 48, 0.62);
-  color: #ffdede;
-  width: 30px;
-  height: 30px;
   margin: 10px 10px 10px 0;
-  border-radius: 8px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   z-index: 2;
 }
 
-.conversation-delete-btn:hover {
-  background: rgba(110, 35, 59, 0.82);
-  border-color: rgba(255, 150, 150, 0.62);
-}
-
-.conversation-delete-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+/* visual styling handled by .card-delete-btn (base.css) */
 
 .conversation-task::before {
   content: '';
