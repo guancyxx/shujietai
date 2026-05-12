@@ -21,6 +21,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+import re
 from typing import Any, AsyncIterator
 
 import httpx
@@ -33,6 +34,89 @@ logger = logging.getLogger(__name__)
 _POST_TIMEOUT = 30.0
 # How long the SSE stream can sit idle before we give up (keepalive comes every 30 s).
 _STREAM_IDLE_TIMEOUT = 90.0
+
+
+def _find_first_mapping(*values: Any) -> dict[str, Any] | None:
+    for value in values:
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _decode_preview_json(preview: Any) -> dict[str, Any] | None:
+    if not isinstance(preview, str) or not preview.strip():
+        return None
+    try:
+        decoded = _json.loads(preview)
+    except _json.JSONDecodeError:
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _extract_skill_name(tool_name: str, preview: Any, arguments: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    if tool_name != "skill_view":
+        return None, None
+
+    if arguments:
+        name = arguments.get("name")
+        file_path = arguments.get("file_path")
+        if name:
+            return str(name), str(file_path or "") or None
+
+    preview_args = _decode_preview_json(preview)
+    if preview_args:
+        name = preview_args.get("name")
+        file_path = preview_args.get("file_path")
+        if name:
+            return str(name), str(file_path or "") or None
+
+    preview_text = str(preview or "")
+    patterns = [
+        r"name\s*=\s*['\"]([^'\"]+)['\"]",
+        r"['\"]name['\"]\s*:\s*['\"]([^'\"]+)['\"]",
+    ]
+    skill_name = None
+    for pattern in patterns:
+        match = re.search(pattern, preview_text)
+        if match:
+            skill_name = match.group(1)
+            break
+    file_match = re.search(r"(?:file_path|path)\s*=\s*['\"]([^'\"]+)['\"]", preview_text) or re.search(
+        r"['\"]file_path['\"]\s*:\s*['\"]([^'\"]+)['\"]", preview_text
+    )
+    return skill_name, (file_match.group(1) if file_match else None)
+
+
+def _normalize_tool_event(event: dict[str, Any], *, completed: bool) -> dict[str, Any]:
+    tool_name = str(event.get("tool") or event.get("tool_name") or event.get("function_name") or "")
+    preview = event.get("preview")
+    arguments = _find_first_mapping(
+        event.get("arguments"),
+        event.get("args"),
+        event.get("function_args"),
+        event.get("input"),
+        _decode_preview_json(preview),
+    )
+    skill_name, skill_file_path = _extract_skill_name(tool_name, preview, arguments)
+    payload: dict[str, Any] = {
+        "type": "tool_complete" if completed else "tool_start",
+        "tool": tool_name,
+        "tool_name": tool_name,
+        "function_name": tool_name,
+        "preview": preview,
+        "arguments": arguments,
+        "raw_event": event,
+    }
+    if event.get("id") or event.get("tool_call_id"):
+        payload["tool_call_id"] = event.get("tool_call_id") or event.get("id")
+    if skill_name:
+        payload["skill_name"] = skill_name
+    if skill_file_path:
+        payload["skill_file_path"] = skill_file_path
+    if completed:
+        payload["duration"] = event.get("duration")
+        payload["error"] = bool(event.get("error", False))
+    return payload
 
 
 class HermesRunsConnector:
@@ -175,19 +259,10 @@ class HermesRunsConnector:
                                 yield {"type": "content_delta", "content": delta}
 
                         elif etype == "tool.started":
-                            yield {
-                                "type": "tool_start",
-                                "tool": event.get("tool", ""),
-                                "preview": event.get("preview"),
-                            }
+                            yield _normalize_tool_event(event, completed=False)
 
                         elif etype == "tool.completed":
-                            yield {
-                                "type": "tool_complete",
-                                "tool": event.get("tool", ""),
-                                "duration": event.get("duration"),
-                                "error": bool(event.get("error", False)),
-                            }
+                            yield _normalize_tool_event(event, completed=True)
 
                         elif etype == "reasoning.available":
                             text = event.get("text", "")

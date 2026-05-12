@@ -361,6 +361,11 @@ const dispatchMessages = computed(() => {
       const functionArgsDelta = payload.function_args_delta || ''
       const existingTool = toolStates.get(toolCallId)
 
+      const isSkillView = functionName === 'skill_view' || payload.skill_name
+      const displayFunctionName = isSkillView
+        ? `读取技能：${payload.skill_name || payload.function_args?.name || payload.arguments?.name || functionName}`
+        : `🔧 Calling: **${functionName}**`
+
       if (existingTool) {
         existingTool.args += functionArgsDelta
         existingTool.updatedAt = evt.created_at
@@ -369,13 +374,15 @@ const dispatchMessages = computed(() => {
         const toolMessage = {
           id: evt.id,
           role: 'tool',
-          content: `🔧 Calling: **${functionName}**`,
+          content: displayFunctionName,
           content_type: 'text/markdown',
           created_at: evt.created_at,
           meta_json: {
             tool_call: true,
             tool_call_id: toolCallId,
             function_name: functionName,
+            skill_name: payload.skill_name || null,
+            skill_file_path: payload.skill_file_path || null,
             function_args: functionArgsDelta,
             completed: evt.event_name === 'tool.call.completed',
           },

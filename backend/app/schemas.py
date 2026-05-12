@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 TaskLane = Literal["todo", "doing", "done"]
-TaskBoardStatus = Literal["draft", "in_progress", "blocked", "completed", "cancelled"]
+TaskBoardStatus = Literal["draft", "pending_execution", "in_progress", "blocked", "completed", "cancelled"]
 MessageRole = Literal["user", "assistant", "system", "tool"]
 
 

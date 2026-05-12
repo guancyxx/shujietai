@@ -13,7 +13,7 @@ from uuid import uuid4
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import DispatchEventEntity, DispatchTaskEntity, MessageEntity, SessionEntity
+from app.db.models import DispatchEventEntity, DispatchTaskEntity, MessageEntity, SessionEntity, TaskBoardEntity
 from app.schemas import (
     DispatchCreateRequest,
     DispatchEventItem,
@@ -38,6 +38,7 @@ _TRANSITIONS: dict[str, set[str]] = {
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "aborted"}
 _ACTIVE_STATUSES = {"queued", "running", "awaiting_input", "paused"}
+_DISPATCH_NON_TERMINAL_STATUSES = {"queued", "running", "awaiting_input", "paused"}
 
 
 def _now() -> datetime:
@@ -76,6 +77,28 @@ def _event_entity_to_item(entity: DispatchEventEntity) -> DispatchEventItem:
         payload=entity.payload or {},
         created_at=entity.created_at,
     )
+
+
+def _build_task_board_dispatch_prompt(item: TaskBoardEntity, project: object | None) -> str:
+    project_name = getattr(project, "name", "") if project is not None else ""
+    repository_url = getattr(project, "repository_url", "") if project is not None else ""
+    lines = [
+        "Execute the following task from ShuJieTai task board.",
+        "",
+        f"Task: {item.name}",
+        f"Priority: P{max(0, int(item.priority or 3) - 1)}",
+    ]
+    if project_name:
+        lines.append(f"Project: {project_name}")
+    if repository_url:
+        lines.append(f"Repository: {repository_url}")
+    if item.description:
+        lines.extend(["", "Task details:", item.description])
+    lines.extend([
+        "",
+        "Follow the task requirements exactly. Keep progress visible through tool calls and final response.",
+    ])
+    return "\n".join(lines)
 
 
 class DispatchService:
@@ -166,6 +189,59 @@ class DispatchService:
             db.add(entity)
 
         return _entity_to_item(entity)
+
+    def get_active_task_for_task_board_item(self, task_board_item_id: str) -> DispatchTaskItem | None:
+        with self._session_factory() as db:
+            row = db.execute(
+                select(DispatchTaskEntity)
+                .where(
+                    DispatchTaskEntity.task_board_item_id == task_board_item_id,
+                    DispatchTaskEntity.status.in_(_DISPATCH_NON_TERMINAL_STATUSES),
+                )
+                .order_by(DispatchTaskEntity.created_at.desc())
+            ).scalar_one_or_none()
+            return _entity_to_item(row) if row is not None else None
+
+    def list_pending_execution_task_board_items(self, limit: int = 20) -> list[TaskBoardEntity]:
+        with self._session_factory() as db:
+            rows = db.execute(
+                select(TaskBoardEntity)
+                .where(TaskBoardEntity.status == "pending_execution")
+                .order_by(TaskBoardEntity.updated_at.asc(), TaskBoardEntity.created_at.asc())
+                .limit(limit)
+            ).scalars().all()
+            return [row for row in rows]
+
+    def mark_task_board_item_status(self, task_board_item_id: str, status: str) -> bool:
+        with self._session_factory.begin() as db:
+            entity = db.get(TaskBoardEntity, task_board_item_id)
+            if entity is None:
+                return False
+            entity.status = status
+            entity.updated_at = _now()
+            return True
+
+    def create_task_for_task_board_item(self, task_board_item_id: str) -> DispatchTaskItem | None:
+        with self._session_factory() as db:
+            item = db.get(TaskBoardEntity, task_board_item_id)
+            if item is None:
+                return None
+            project = None
+            if item.project_id:
+                from app.db.models import ProjectEntity
+                project = db.get(ProjectEntity, item.project_id)
+            prompt = _build_task_board_dispatch_prompt(item, project)
+            project_part = f"project_{item.project_id}_" if item.project_id else "task_board_"
+            external_session_id = f"{project_part}{item.id}"
+
+        return self.create_task(
+            DispatchCreateRequest(
+                task_board_item_id=task_board_item_id,
+                ai_platform=item.ai_platform or "hermes",
+                initial_prompt=prompt,
+                external_session_id=external_session_id,
+            )
+        )
 
     def list_events(self, task_id: str, limit: int = 200, offset: int = 0) -> list[DispatchEventItem]:
         with self._session_factory() as db:

@@ -733,10 +733,10 @@ h2 {
 
 .conversation-latest-status {
   grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   margin-top: 2px;
   margin-bottom: 2px;
   padding: 8px 10px;
@@ -756,13 +756,37 @@ h2 {
   font-size: 0.83rem;
   font-weight: 600;
   color: #dbeafe;
-  min-width: 0;
+  min-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.status-task-chip,
+.status-skill-chip {
+  border: 1px solid rgba(125, 211, 252, 0.36);
+  background: rgba(14, 165, 233, 0.12);
+  color: #e0f2fe;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.status-task-chip:hover,
+.status-skill-chip:hover {
+  border-color: rgba(125, 211, 252, 0.68);
+  background: rgba(14, 165, 233, 0.22);
+}
+
+.status-skill-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .latest-status-time {
+  margin-left: auto;
   font-size: 0.72rem;
   color: rgba(191, 219, 254, 0.7);
   white-space: nowrap;
@@ -1779,6 +1803,13 @@ details[open] .thinking-summary::before {
   box-shadow: 0 0 8px rgba(64, 210, 255, 0.18);
 }
 
+.task-status-pending_execution {
+  color: #ffe17a;
+  border: 1px solid rgba(255, 218, 92, 0.52);
+  background: linear-gradient(135deg, rgba(118, 92, 20, 0.68), rgba(86, 62, 14, 0.66));
+  box-shadow: 0 0 8px rgba(255, 212, 84, 0.16);
+}
+
 .task-status-blocked {
   color: #ffb87a;
   border: 1px solid rgba(255, 180, 100, 0.5);
@@ -1813,6 +1844,80 @@ details[open] .thinking-summary::before {
   gap: 6px;
   width: 100%;
   max-width: 220px;
+}
+
+.task-board-name-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+}
+
+.task-board-card-highlighted {
+  border-color: rgba(250, 204, 21, 0.78) !important;
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.2), 0 14px 28px rgba(250, 204, 21, 0.12);
+}
+
+.task-tree-toggle {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(124, 197, 255, 0.28);
+  border-radius: 7px;
+  background: rgba(13, 24, 52, 0.72);
+  color: #bfe7ff;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.task-tree-toggle:hover {
+  border-color: rgba(124, 220, 255, 0.58);
+  color: #f4fbff;
+}
+
+.task-tree-spacer {
+  width: 20px;
+  height: 1px;
+}
+
+.task-board-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-left: 26px;
+}
+
+.task-child-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid rgba(124, 197, 255, 0.22);
+  border-radius: 999px;
+  color: #9fc7ed;
+  background: rgba(12, 24, 50, 0.55);
+  font-size: 11px;
+}
+
+.task-tree-children {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+  padding-left: 12px;
+  border-left: 1px dashed rgba(124, 197, 255, 0.28);
+}
+
+.task-board-card-child {
+  background:
+    radial-gradient(circle at 6% -30%, rgba(57, 220, 255, 0.1), transparent 40%),
+    linear-gradient(145deg, rgba(18, 32, 62, 0.68), rgba(11, 21, 45, 0.82));
+  box-shadow: 0 0 0 1px rgba(111, 191, 255, 0.08) inset;
+  padding: 10px;
+}
+
+.task-board-card-grandchild {
+  opacity: 0.94;
 }
 
 .priority-badge {
