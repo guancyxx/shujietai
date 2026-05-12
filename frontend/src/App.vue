@@ -405,23 +405,43 @@ const currentLinkedTaskId = computed(() => {
 
 const currentLinkedTask = computed(() => findTaskBoardItemById(currentLinkedTaskId.value))
 
+// Extract skill chips from both dispatch tool events and session events.
+// Dispatch events are the live source; session events provide fallback for
+// historical conversations without an active dispatch task.
+function extractSkillChip(payload, seen) {
+  const functionName = payload.function_name || payload.tool_name || ''
+  const skillName = payload.skill_name || (functionName === 'skill_view' ? extractSkillNameFromToolPayload(payload) : '')
+  if (!skillName || seen.has(skillName)) return null
+  seen.add(skillName)
+  return {
+    name: skillName,
+    file_path: payload.skill_file_path || '',
+    skill_type: 'builtin',
+    category: 'loaded',
+    description: payload.skill_file_path ? `已读取 ${payload.skill_file_path}` : '本轮会话已加载',
+  }
+}
+
 const currentLoadedSkills = computed(() => {
   const seen = new Set()
   const items = []
+
+  // Primary source: live dispatch tool events (normalized by hermes_connector)
   for (const evt of dispatchTaskEvents.value) {
-    const payload = evt.payload || {}
-    const functionName = payload.function_name || payload.tool_name || ''
-    const skillName = payload.skill_name || (functionName === 'skill_view' ? extractSkillNameFromToolPayload(payload) : '')
-    if (!skillName || seen.has(skillName)) continue
-    seen.add(skillName)
-    items.push({
-      name: skillName,
-      file_path: payload.skill_file_path || '',
-      skill_type: 'builtin',
-      category: 'loaded',
-      description: payload.skill_file_path ? `已读取 ${payload.skill_file_path}` : '本轮会话已加载',
-    })
+    const chip = extractSkillChip(evt.payload || {}, seen)
+    if (chip) items.push(chip)
   }
+
+  // Fallback: session events from the session store timeline
+  // (covers historical sessions without an active dispatch task)
+  if (items.length === 0) {
+    for (const evt of (timeline.value.events || [])) {
+      const payloadJson = evt.payload_json || {}
+      const chip = extractSkillChip(payloadJson, seen)
+      if (chip) items.push(chip)
+    }
+  }
+
   return items
 })
 
