@@ -142,6 +142,7 @@ const skillsCatalogTypeFilter = ref('全部')
 const skillDetailTarget = ref(null)
 const skillDetailContent = ref('')
 const skillDetailContentLoading = ref(false)
+const skillDetailError = ref('')
 const skillsCatalogPage = ref(1)
 const skillsCatalogPageSize = 30
 const skillsCatalogView = ref('list')  // 'list' | 'graph'
@@ -191,19 +192,32 @@ watch([skillsCatalogSearch, skillsCatalogCategoryFilter, skillsCatalogTypeFilter
 async function openSkillDetail(skill) {
   skillDetailTarget.value = skill
   skillDetailContent.value = ''
+  skillDetailError.value = ''
   skillDetailContentLoading.value = true
   try {
     const res = await fetch(`${apiBase}/api/v1/skills/${encodeURIComponent(skill.name)}/content`)
     if (res.ok) {
       const data = await res.json()
       skillDetailContent.value = data.content || ''
+      if (data.path) {
+        skillDetailTarget.value = { ...skillDetailTarget.value, _api_path: data.path }
+      }
+    } else if (res.status === 404) {
+      skillDetailError.value = '技能内容文件未找到。该技能可能已被移除或技能名称有误。'
+    } else if (res.status === 403 || res.status === 401) {
+      skillDetailError.value = '无权访问该技能内容，请检查文件权限。'
+    } else {
+      skillDetailError.value = '加载技能内容失败 (HTTP ' + res.status + ')，请稍后重试。'
     }
-  } catch (_) {}
+  } catch (_) {
+    skillDetailError.value = '网络请求失败，无法加载技能内容。请检查后端服务是否正常运行。'
+  }
   skillDetailContentLoading.value = false
 }
 function closeSkillDetail() {
   skillDetailTarget.value = null
   skillDetailContent.value = ''
+  skillDetailError.value = ''
 }
 
 async function loadSkillsCatalog() {
@@ -2645,7 +2659,9 @@ onUnmounted(() => {
           <span class="skill-category-badge">{{ skillDetailTarget.category }}</span>
         </div>
         <div class="skill-detail-desc">{{ skillDetailTarget.description || '暂无描述' }}</div>
-        <div v-if="skillDetailContentLoading" class="muted skill-detail-content-loading">加载内容中...</div>
+        <div v-if="skillDetailTarget.file_path || skillDetailTarget._api_path" class="skill-detail-path">📄 当前读取：{{ skillDetailTarget._api_path || skillDetailTarget.file_path }}</div>
+        <div v-if="skillDetailContentLoading" class="muted skill-detail-content-loading">⏳ 加载内容中...</div>
+        <div v-else-if="skillDetailError" class="skill-detail-content-error">❌ {{ skillDetailError }}</div>
         <pre v-else-if="skillDetailContent" class="skill-detail-content scrollbar-themed">{{ skillDetailContent }}</pre>
         <div v-else class="muted skill-detail-content-empty">暂无详细内容</div>
       </div>
