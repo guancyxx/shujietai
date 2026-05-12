@@ -23,6 +23,8 @@ const isModelModalOpen = ref(false)
 const isSkillModalOpen = ref(false)
 const isMcpModalOpen = ref(false)
 const isCreateConversationModalOpen = ref(false)
+const blankChatProvider = ref('')
+const isBlankChatMode = ref(false)
 const modelSearchDraft = ref('')
 const modelProviderDraft = ref('')
 const tempSelectedModel = ref('')
@@ -761,6 +763,11 @@ const modelProviderOptions = computed(() => {
   return ['全部', ...Array.from(values).filter((value) => value && value !== '-').sort()]
 })
 
+const blankChatProviders = computed(() => {
+  const values = new Set(modelRuntimeCatalog.value.availableModelItems.map((item) => item.provider || ''))
+  return Array.from(values).filter(Boolean).sort()
+})
+
 const filteredModelItems = computed(() => {
   const providerFilter = modelProviderDraft.value
   const keyword = modelSearchDraft.value.trim().toLowerCase()
@@ -975,6 +982,19 @@ function createNewConversation() {
 function selectConversation(sessionId, externalSessionId) {
   selectedSessionId.value = sessionId
   selectedExternalSessionId.value = externalSessionId
+  isBlankChatMode.value = false
+}
+
+function activateBlankChat() {
+  selectedSessionId.value = ''
+  selectedExternalSessionId.value = ''
+  isBlankChatMode.value = true
+  clearActiveTask()
+  timeline.value = { messages: [], events: [] }
+  // Initialize provider if not set
+  if (!blankChatProvider.value && blankChatProviders.value.length > 0) {
+    blankChatProvider.value = blankChatProviders.value[0]
+  }
 }
 
 function roleClass(role) {
@@ -1977,6 +1997,8 @@ async function sendMessageToHermes() {
           mcpServers: [...selectedMcpServers.value],
           externalSessionId: selectedExternalSessionId.value || null,
         })
+        // Exit blank chat mode after dispatch creation (now has a real session)
+        isBlankChatMode.value = false
       }
     }
 
@@ -1992,12 +2014,29 @@ async function sendMessageToHermes() {
   }
 }
 
+// When blank chat provider changes, auto-select a model from that provider
+watch(blankChatProvider, (newProvider) => {
+  if (!newProvider) return
+  const items = modelRuntimeCatalog.value.availableModelItems
+  const providerModels = items.filter((item) => item.provider === newProvider)
+  if (providerModels.length > 0) {
+    // Select the first model from this provider, or the one already matching
+    const currentProvider = items.find((item) => item.name === selectedModel.value)?.provider
+    if (currentProvider !== newProvider) {
+      selectedModel.value = providerModels[0].name
+    }
+  }
+})
+
 watch(selectedSessionId, async () => {
   userScrolledUp.value = false
   if (!selectedSessionId.value) {
     timeline.value = { messages: [], events: [] }
-    cockpit.value = null
     clearActiveTask()
+    // Keep cockpit for blank chat provider list
+    if (!isBlankChatMode.value) {
+      cockpit.value = null
+    }
     return
   }
   try {
@@ -2109,6 +2148,26 @@ onUnmounted(() => {
                 {{ clearingSessions ? '清空中...' : '清空对话' }}
               </button>
             </div>
+          </div>
+
+          <div
+            class="pinned-ai-entry"
+            :class="{ 'pinned-ai-entry-active': isBlankChatMode }"
+            @click="activateBlankChat"
+          >
+            <div class="pinned-ai-icon">🤖</div>
+            <div class="pinned-ai-body">
+              <div class="pinned-ai-title">AI Assistant</div>
+              <div class="pinned-ai-subtitle">Quick chat — no history loaded</div>
+            </div>
+            <select
+              v-if="blankChatProviders.length > 1"
+              v-model="blankChatProvider"
+              class="pinned-ai-provider-select"
+              @click.stop
+            >
+              <option v-for="provider in blankChatProviders" :key="provider" :value="provider">{{ provider }}</option>
+            </select>
           </div>
 
           <div class="conversation-only-list">
