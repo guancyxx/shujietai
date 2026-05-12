@@ -152,7 +152,16 @@ async function postJson(url, payload) {
 }
 
 // Create a dispatch task (replaces direct SSE call to Hermes)
-async function createDispatchTask({ aiPlatform = 'hermes', initialPrompt, systemPrompt = '', model = '', skills = [], mcpServers = [], taskBoardItemId = null }) {
+async function createDispatchTask({
+  aiPlatform = 'hermes',
+  initialPrompt,
+  systemPrompt = '',
+  model = '',
+  skills = [],
+  mcpServers = [],
+  taskBoardItemId = null,
+  externalSessionId = null,
+}) {
   taskLoading.value = true
   taskError.value = ''
   taskEvents.value = []
@@ -165,6 +174,7 @@ async function createDispatchTask({ aiPlatform = 'hermes', initialPrompt, system
       ai_platform: aiPlatform,
       initial_prompt: initialPrompt,
       task_board_item_id: taskBoardItemId,
+      external_session_id: externalSessionId,
       system_prompt: systemPrompt,
       model,
       skills,

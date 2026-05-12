@@ -151,7 +151,7 @@ class DispatchService:
             task_board_item_id=payload.task_board_item_id,
             status="queued",
             ai_platform=payload.ai_platform,
-            external_session_id=f"dispatch_{task_id}",
+            external_session_id=payload.external_session_id or f"dispatch_{task_id}",
             current_run_id=run_id,
             last_sequence=0,
             config=config,

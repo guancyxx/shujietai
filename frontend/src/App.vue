@@ -768,6 +768,10 @@ function taskBoardStatusClass(status) {
   return `task-status-${status || 'draft'}`
 }
 
+function isTerminalDispatchStatus(status) {
+  return ['completed', 'failed', 'cancelled', 'aborted'].includes(status)
+}
+
 function resetCreateConversationForm() {
   createConversationPlatform.value = selectedSession.value?.platform || 'hermes'
   createConversationInitialMessage.value = ''
@@ -1786,23 +1790,29 @@ async function sendMessageToHermes() {
 
   sending.value = true
   errorMessage.value = ''
-  composerText.value = ''
 
   try {
-    // If there is an active dispatch task awaiting input or paused, resume it
+    // If there is an active dispatch task awaiting input or paused, resume it.
     if (dispatchTaskId.value && dispatchIsResumable.value) {
+      composerText.value = ''
       await resumeDispatchTask(trimmed)
-    } else if (!dispatchTaskId.value) {
-      // No active dispatch task — create a new one
-      clearActiveTask()
-      if (!wsConnected.value) wsConnect()
-      await createDispatchTask({
-        aiPlatform: 'hermes',
-        initialPrompt: trimmed,
-        model: selectedModel.value || '',
-        skills: [...selectedSkills.value],
-        mcpServers: [...selectedMcpServers.value],
-      })
+    } else {
+      if (dispatchActiveTask.value && isTerminalDispatchStatus(dispatchActiveTask.value.status)) {
+        clearActiveTask()
+      }
+
+      if (!dispatchTaskId.value) {
+        composerText.value = ''
+        if (!wsConnected.value) wsConnect()
+        await createDispatchTask({
+          aiPlatform: 'hermes',
+          initialPrompt: trimmed,
+          model: selectedModel.value || '',
+          skills: [...selectedSkills.value],
+          mcpServers: [...selectedMcpServers.value],
+          externalSessionId: selectedExternalSessionId.value || null,
+        })
+      }
     }
 
     // Auto-scroll to bottom and reset user scroll state (new message sent)
