@@ -785,6 +785,16 @@ def get_skill_content(skill_name: str):
                     return {"name": skill_name, "content": content, "path": str(candidate)}
                 except Exception as e:
                     raise HTTPException(status_code=500, detail=str(e))
+        # Flat name fallback: recursively search subdirectories for <name>/SKILL.md
+        try:
+            for found in base_dir.rglob(f"**/{skill_name}/SKILL.md"):
+                try:
+                    content = found.read_text(encoding="utf-8")
+                    return {"name": skill_name, "content": content, "path": str(found)}
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
+        except OSError:
+            pass
 
     raise HTTPException(status_code=404, detail=f"SKILL.md not found for: {skill_name}")
 

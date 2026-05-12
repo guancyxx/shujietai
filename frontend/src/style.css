@@ -3105,6 +3105,18 @@ details[open] .thinking-summary::before {
   white-space: pre-wrap;
 }
 
+.skill-detail-path {
+  font-size: 0.78rem;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.18);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 10px;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
 .skill-detail-content {
   font-size: 0.78rem;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
@@ -3124,6 +3136,16 @@ details[open] .thinking-summary::before {
 .skill-detail-content-empty {
   font-size: 0.82rem;
   padding: 8px 0;
+}
+
+.skill-detail-content-error {
+  font-size: 0.82rem;
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.18);
+  border-radius: 6px;
+  padding: 10px 14px;
+  line-height: 1.6;
 }
 
 .skills-catalog-pagination {
