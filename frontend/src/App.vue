@@ -1,11 +1,27 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useWebSocket } from './composables/useWebSocket.js'
 import { useDispatchTask } from './composables/useDispatchTask.js'
 import { useDispatchHistory } from './composables/useDispatchHistory.js'
 import SkillGraph from './SkillGraph.vue'
+import { useMarkdownRenderer } from './composables/useMarkdownRenderer.js'
+import { useTimelineScroll } from './composables/useTimelineScroll.js'
+import { deleteJson, fetchJson, patchJson, postJson, postJsonTimeout, putJson } from './services/apiClient.js'
+import { buildTaskTree, countTaskTreeNodes, getTaskPriority, makeTaskNodeKey } from './services/taskBoardTree.js'
+import {
+  COLLAPSIBLE_KANBAN_STATUSES,
+  DISPATCH_EVENT_LABEL_MAP,
+  KANBAN_PRIORITY_LABELS,
+  KANBAN_PRIORITY_ORDER,
+  KANBAN_STATUSES,
+  LANE_TITLE_MAP,
+  PAGE_WHITELIST,
+  ROLE_LABEL_MAP,
+  TASK_BOARD_PRIORITY_LABEL_MAP,
+  TASK_BOARD_PRIORITY_OPTIONS,
+  TASK_BOARD_STATUS_LABEL_MAP,
+  TASK_BOARD_STATUS_OPTIONS,
+} from './constants/appConstants.js'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 
@@ -41,7 +57,27 @@ const sending = ref(false)
 const deletingSessionId = ref('')
 const clearingSessions = ref(false)
 const composerText = ref('')
-const activePage = ref('chat')
+// Load persisted active page from localStorage on init — avoids flashing to chat first
+function getInitialPage() {
+  try {
+    const saved = localStorage.getItem('shujietai_activePage')
+    if (PAGE_WHITELIST.includes(saved)) return saved
+  } catch {
+    // localStorage unavailable (private browsing), ignore
+  }
+  return 'chat'
+}
+
+const activePage = ref(getInitialPage())
+
+// Persist active page on every switch so refresh restores the last page
+watch(activePage, (page) => {
+  try {
+    localStorage.setItem('shujietai_activePage', page)
+  } catch {
+    // localStorage write blocked, ignore
+  }
+})
 const projects = ref([])
 const githubRepos = ref([])
 const projectSearch = ref('')
@@ -69,27 +105,12 @@ const startingConversationFromTask = ref(false)
 const streamingContent = ref('')        // Current streaming assistant message content
 const isStreaming = ref(false)           // Whether a stream is in progress
 const streamAbortController = ref(null) // AbortController for cancelling streams
-const timelineScrollRef = ref(null)   // Ref for auto-scrolling timeline container
-const userScrolledUp = ref(false)     // Whether user manually scrolled up (pause auto-scroll)
-
-// Scroll timeline to bottom. If force=true, always scroll; otherwise respect user scroll state.
-function scrollToBottom(force = false) {
-  if (!timelineScrollRef.value) return
-  if (!force && userScrolledUp.value) return
-  nextTick(() => {
-    const el = timelineScrollRef.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
-}
-
-// Detect if user scrolled away from bottom
-function onTimelineScroll() {
-  const el = timelineScrollRef.value
-  if (!el) return
-  // 40px threshold — close enough to bottom counts as "at bottom"
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-  userScrolledUp.value = !atBottom
-}
+const {
+  timelineScrollRef,
+  scrollToBottom,
+  onTimelineScroll,
+  resetTimelineScroll,
+} = useTimelineScroll()
 
 // Dispatch orchestration layer (ADR-0004) — replaces direct SSE with async dispatch + WebSocket
 const {
@@ -332,37 +353,10 @@ const filteredProjects = computed(() => {
   })
 })
 
-const taskBoardStatusOptions = [
-  { value: 'draft', label: '草稿' },
-  { value: 'pending_execution', label: '待执行' },
-  { value: 'in_progress', label: '进行中' },
-  { value: 'blocked', label: '阻塞' },
-  { value: 'cancelled', label: '取消' },
-  { value: 'completed', label: '已完成' },
-]
-
-const taskBoardStatusLabelMap = {
-  draft: '草稿',
-  pending_execution: '待执行',
-  in_progress: '进行中',
-  blocked: '阻塞',
-  completed: '已完成',
-  cancelled: '取消',
-}
-
-const taskBoardPriorityOptions = [
-  { value: 1, label: 'P0' },
-  { value: 2, label: 'P1' },
-  { value: 3, label: 'P2' },
-  { value: 4, label: 'P3' },
-]
-
-const taskBoardPriorityLabelMap = {
-  1: 'P0',
-  2: 'P1',
-  3: 'P2',
-  4: 'P3',
-}
+const taskBoardStatusOptions = TASK_BOARD_STATUS_OPTIONS
+const taskBoardStatusLabelMap = TASK_BOARD_STATUS_LABEL_MAP
+const taskBoardPriorityOptions = TASK_BOARD_PRIORITY_OPTIONS
+const taskBoardPriorityLabelMap = TASK_BOARD_PRIORITY_LABEL_MAP
 
 const taskBoardProjectOptions = computed(() => [
   { value: '', label: '全部项目' },
@@ -396,57 +390,6 @@ const filteredTaskBoardItems = computed(() => {
     return text.includes(keyword)
   })
 })
-
-const KANBAN_STATUSES = ['draft', 'pending_execution', 'in_progress', 'blocked', 'cancelled', 'completed']
-const COLLAPSIBLE_KANBAN_STATUSES = ['completed']
-const KANBAN_PRIORITY_LABELS = { 1: 'P0', 2: 'P1', 3: 'P2', 4: 'P3' }
-const KANBAN_PRIORITY_ORDER = [1, 2, 3, 4]
-
-function getTaskPriority(item) {
-  const priority = Number(item?.priority ?? 3)
-  return KANBAN_PRIORITY_ORDER.includes(priority) ? priority : 3
-}
-
-function sortTaskBoardSiblings(items) {
-  return [...items].sort((a, b) => {
-    const priorityDiff = getTaskPriority(a) - getTaskPriority(b)
-    if (priorityDiff !== 0) return priorityDiff
-    const updatedDiff = String(b.updated_at || '').localeCompare(String(a.updated_at || ''))
-    if (updatedDiff !== 0) return updatedDiff
-    return String(a.name || '').localeCompare(String(b.name || ''))
-  })
-}
-
-function buildTaskTree(items) {
-  const nodesById = new Map()
-  const roots = []
-  for (const item of sortTaskBoardSiblings(items)) {
-    nodesById.set(item.id, { ...item, children: [] })
-  }
-  for (const node of nodesById.values()) {
-    const parentId = node.parent_task_id || null
-    const parent = parentId ? nodesById.get(parentId) : null
-    if (parent) {
-      parent.children.push(node)
-    } else {
-      roots.push(node)
-    }
-  }
-  const sortChildren = (node) => {
-    node.children = sortTaskBoardSiblings(node.children)
-    node.children.forEach(sortChildren)
-    return node
-  }
-  return sortTaskBoardSiblings(roots).map(sortChildren)
-}
-
-function countTaskTreeNodes(nodes) {
-  return nodes.reduce((sum, node) => sum + 1 + countTaskTreeNodes(node.children || []), 0)
-}
-
-function makeTaskNodeKey(item) {
-  return item?.id || ''
-}
 
 function findTaskBoardItemById(taskId) {
   if (!taskId) return null
@@ -592,30 +535,9 @@ const selectedCreateRepo = computed(() => {
   return githubRepos.value.find((repo) => repo.url === createProjectForm.value.repository_url) || null
 })
 
-const laneTitleMap = {
-  todo: '待处理',
-  doing: '进行中',
-  done: '已完成',
-}
-
-const roleLabelMap = {
-  user: '用户',
-  assistant: '助手',
-  system: '系统',
-  tool: '工具',
-}
-
-const dispatchEventLabelMap = {
-  content_delta: 'AI 正在返回内容',
-  tool_call: 'AI 正在调用工具',
-  tool_start: 'AI 正在调用工具',
-  tool_complete: '工具调用完成',
-  agent_thinking: 'AI 思考中…',
-  await_input: 'AI 等待你补充信息',
-  completed: '任务已完成',
-  error: '任务执行异常',
-  cancelled: '任务已取消',
-}
+const laneTitleMap = LANE_TITLE_MAP
+const roleLabelMap = ROLE_LABEL_MAP
+const dispatchEventLabelMap = DISPATCH_EVENT_LABEL_MAP
 
 const latestDispatchEvent = computed(() => {
   if (!dispatchTaskEvents.value.length) {
@@ -657,23 +579,7 @@ const conversationLatestStatus = computed(() => {
   }
 })
 
-// Render markdown content safely with DOMPurify — with LRU cache to avoid re-parsing
-const _markdownCache = new Map()
-const _MARKDOWN_CACHE_MAX = 200
-
-function renderMarkdown(text) {
-  if (!text) return ''
-  const cached = _markdownCache.get(text)
-  if (cached !== undefined) return cached
-  const html = marked.parse(text, { breaks: true, gfm: true })
-  const safe = DOMPurify.sanitize(html)
-  if (_markdownCache.size >= _MARKDOWN_CACHE_MAX) {
-    const firstKey = _markdownCache.keys().next().value
-    _markdownCache.delete(firstKey)
-  }
-  _markdownCache.set(text, safe)
-  return safe
-}
+const { renderMarkdown } = useMarkdownRenderer()
 
 // Merged timeline: historical messages + dispatch messages (via WebSocket) + streaming assistant message
 const displayMessages = computed(() => {
@@ -1023,121 +929,6 @@ function formatTime(value) {
   return parsed.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-async function parseErrorDetail(response) {
-  let detail = ''
-  try {
-    const data = await response.json()
-    detail = typeof data?.detail === 'string' ? data.detail : JSON.stringify(data?.detail || data || '')
-  } catch {
-    try {
-      detail = (await response.text()) || ''
-    } catch {
-      detail = ''
-    }
-  }
-  return detail.trim()
-}
-
-function mapApiError(status, detail) {
-  const normalized = String(detail || '').toLowerCase()
-  if (status === 503 && normalized.includes('gh_cli_unavailable')) {
-    return 'GitHub service is temporarily unavailable (gh CLI missing in backend). Please contact admin or retry later.'
-  }
-  if (status === 503 && normalized.includes('github_repo_create_unavailable')) {
-    return 'GitHub repo creation is unavailable: both gh CLI and token fallback are not ready. Please configure token or backend runtime.'
-  }
-  if (status === 503 && normalized.includes('github_api_failed')) {
-    return 'GitHub API is temporarily unavailable. Please retry in a moment.'
-  }
-  if (status === 401 || normalized.includes('bad credentials') || normalized.includes('requires authentication')) {
-    return 'GitHub authentication failed. Please update GitHub token in system config.'
-  }
-  if (status === 422) {
-    return `Validation failed: ${detail || 'invalid request payload'}`
-  }
-  if (detail) {
-    return `Request failed: ${status} (${detail})`
-  }
-  return `Request failed: ${status}`
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url)
-  if (!response.ok) {
-    const detail = await parseErrorDetail(response)
-    throw new Error(mapApiError(response.status, detail))
-  }
-  return response.json()
-}
-
-async function postJson(url, payload) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) {
-    const detail = await parseErrorDetail(response)
-    throw new Error(mapApiError(response.status, detail))
-  }
-  return response.json()
-}
-
-async function postJsonTimeout(url, payload, timeoutMs) {
-  const controller = new AbortController()
-  const id = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    })
-    if (!response.ok) {
-      const detail = await parseErrorDetail(response)
-      throw new Error(mapApiError(response.status, detail))
-    }
-    return await response.json()
-  } finally {
-    clearTimeout(id)
-  }
-}
-
-async function putJson(url, payload) {
-  const response = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) {
-    const detail = await parseErrorDetail(response)
-    throw new Error(mapApiError(response.status, detail))
-  }
-  return response.json()
-}
-
-async function patchJson(url, payload) {
-  const response = await fetch(url, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) {
-    const detail = await parseErrorDetail(response)
-    throw new Error(mapApiError(response.status, detail))
-  }
-  return response.json()
-}
-
-async function deleteJson(url) {
-  const response = await fetch(url, { method: 'DELETE' })
-  if (!response.ok) {
-    const detail = await parseErrorDetail(response)
-    throw new Error(mapApiError(response.status, detail))
-  }
-  return response.json()
-}
-
 async function persistRuntimePreferences() {
   const payload = {
     selected_model: selectedModel.value || null,
@@ -1484,8 +1275,7 @@ async function startConversationFromTask(task) {
     activePage.value = 'chat'
 
     // Auto-scroll to bottom and reset user scroll state
-    userScrolledUp.value = false
-    scrollToBottom(true)
+    resetTimelineScroll()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
   } finally {
@@ -2003,8 +1793,7 @@ async function sendMessageToHermes() {
     }
 
     // Auto-scroll to bottom and reset user scroll state (new message sent)
-    userScrolledUp.value = false
-    scrollToBottom(true)
+    resetTimelineScroll()
   } catch (error) {
     if (error.name !== 'AbortError') {
       errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
@@ -2029,7 +1818,7 @@ watch(blankChatProvider, (newProvider) => {
 })
 
 watch(selectedSessionId, async () => {
-  userScrolledUp.value = false
+  resetTimelineScroll()
   if (!selectedSessionId.value) {
     timeline.value = { messages: [], events: [] }
     clearActiveTask()
@@ -2366,7 +2155,7 @@ onUnmounted(() => {
           <!-- Matrix Kanban: columns=statuses, rows=projects; cards render parent/child task trees -->
           <div class="kanban-matrix-wrap">
             <div class="kanban-matrix-header" :style="kanbanMatrixStyle">
-              <div class="kanban-row-label-head"></div>
+              <div class="kanban-row-label-head">项目</div>
               <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-col-header" :class="['kanban-col-' + s, { 'kanban-col-collapsed': isKanbanStatusCollapsed(s) }]">
                 <span class="kanban-status-dot" :class="'task-status-' + s"></span>
                 <span class="kanban-col-title">{{ taskBoardStatusLabelMap[s] }}</span>
