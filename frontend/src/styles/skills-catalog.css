@@ -1,18 +1,4 @@
 /* ===== Skills Catalog ===== */
-/* ── Global scrollbar utility — apply to any scrollable element ─────────── */
-.scrollbar-themed {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(111,186,255,0.3) transparent;
-}
-.scrollbar-themed::-webkit-scrollbar { width: 5px; }
-.scrollbar-themed::-webkit-scrollbar-thumb {
-  background: rgba(111,186,255,0.25);
-  border-radius: 3px;
-}
-.scrollbar-themed::-webkit-scrollbar-thumb:hover {
-  background: rgba(111,186,255,0.5);
-}
-.scrollbar-themed::-webkit-scrollbar-track { background: transparent; }
 
 /* ── Skills Catalog Page ─────────────────────────────────────────────────── */
 .skills-catalog-grid {
