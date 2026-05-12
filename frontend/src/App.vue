@@ -2817,7 +2817,10 @@ onUnmounted(() => {
 
           <label class="create-field">
             <span class="create-field-label">AI 平台</span>
-            <input v-model="taskBoardCreateForm.ai_platform" class="picker-search-input" :disabled="creatingTaskBoardItem" placeholder="hermes" />
+            <select v-model="taskBoardCreateForm.ai_platform" class="picker-provider-select" :disabled="creatingTaskBoardItem">
+              <option value="hermes">Hermes Agent</option>
+              <option value="none">无</option>
+            </select>
           </label>
 
           <label class="create-field">
@@ -2923,7 +2926,10 @@ onUnmounted(() => {
 
           <label class="create-field">
             <span class="create-field-label">AI 平台</span>
-            <input v-model="taskBoardEditForm.ai_platform" class="picker-search-input" :disabled="updatingTaskBoardItem" placeholder="hermes" />
+            <select v-model="taskBoardEditForm.ai_platform" class="picker-provider-select" :disabled="updatingTaskBoardItem">
+              <option value="hermes">Hermes Agent</option>
+              <option value="none">无</option>
+            </select>
           </label>
 
           <label class="create-field">
