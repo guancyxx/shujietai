@@ -42,8 +42,23 @@ from app.services.retry_worker import RetryWorkerConfig, run_retry_loop
 from app.services.store_factory import build_store
 from app.services.dispatch_service import DispatchService
 from app.services.dispatch_worker import DispatchWorkerPool
+from app.services.pending_execution_worker import PendingExecutionWorkerConfig, run_pending_execution_loop
 from app.services.ws_manager import WsManager
-from app.connectors.registry import register_defaults
+from app.connectors.registry import register_defaults, list_platforms
+from app.connectors.hermes import HermesConnectorAdapter
+
+class _ConnectorAdapterRegistry:
+    def __init__(self) -> None:
+        self._adapters = {"hermes": HermesConnectorAdapter()}
+
+    def get(self, name: str):
+        return self._adapters[name]
+
+    def names(self) -> list[str]:
+        return sorted(set(self._adapters.keys()) | set(list_platforms()))
+
+
+connector_registry = _ConnectorAdapterRegistry()
 
 store = build_store()
 github_project_service = GitHubProjectService()
@@ -74,6 +89,14 @@ def _build_retry_worker_config() -> RetryWorkerConfig:
         loop_interval_seconds=loop_interval_seconds,
         max_retries=max_retries,
         backoff_seconds=backoff,
+    )
+
+
+def _build_pending_execution_worker_config() -> PendingExecutionWorkerConfig:
+    return PendingExecutionWorkerConfig(
+        enabled=os.getenv("PENDING_EXECUTION_WORKER_ENABLED", "true").lower() == "true",
+        loop_interval_seconds=float(os.getenv("PENDING_EXECUTION_WORKER_INTERVAL_SECONDS", "2")),
+        batch_size=int(os.getenv("PENDING_EXECUTION_WORKER_BATCH_SIZE", "20")),
     )
 
 
@@ -117,9 +140,31 @@ async def lifespan(app_instance: FastAPI):
             )
             app_instance.state.retry_task = retry_task
 
+    pending_execution_task = None
+    if dispatch_service is not None and worker_pool is not None:
+        pending_config = _build_pending_execution_worker_config()
+        if pending_config.enabled:
+            pending_execution_task = asyncio.create_task(
+                run_pending_execution_loop(
+                    dispatch_service=dispatch_service,
+                    worker_pool=worker_pool,
+                    config=pending_config,
+                ),
+                name="pending-execution-worker",
+            )
+            app_instance.state.pending_execution_task = pending_execution_task
+
     try:
         yield
     finally:
+        existing_pending_task = getattr(app_instance.state, "pending_execution_task", None)
+        if existing_pending_task is not None:
+            existing_pending_task.cancel()
+            try:
+                await existing_pending_task
+            except asyncio.CancelledError:
+                pass
+
         # Cancel dispatch worker pool tasks
         if worker_pool is not None:
             worker_pool.cancel_all()
@@ -782,7 +827,12 @@ def list_github_repositories() -> list[GitHubRepoOption]:
 def create_github_repository(payload: GitHubRepoCreateRequest) -> GitHubRepoOption:
     try:
         token = system_config_service.get_github_token()
-        return github_project_service.create_repository(payload, token_override=token)
+        try:
+            return github_project_service.create_repository(payload, token_override=token)
+        except TypeError as exc:
+            if "token_override" not in str(exc):
+                raise
+            return github_project_service.create_repository(payload)
     except RuntimeError as exc:
         detail = str(exc)
         if detail in {"gh_cli_unavailable", "github_repo_create_unavailable"}:

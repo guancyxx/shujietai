@@ -62,6 +62,7 @@ const deletingTaskBoardItemId = ref('')
 const quickUpdatingTaskBoardItemId = ref('')
 const draggingTaskBoardItemId = ref('')
 const taskBoardDetailItem = ref(null)
+const highlightedTaskBoardItemId = ref('')
 const startingConversationFromTask = ref(false)
 const streamingContent = ref('')        // Current streaming assistant message content
 const isStreaming = ref(false)           // Whether a stream is in progress
@@ -316,6 +317,7 @@ const filteredProjects = computed(() => {
 
 const taskBoardStatusOptions = [
   { value: 'draft', label: '草稿' },
+  { value: 'pending_execution', label: '待执行' },
   { value: 'in_progress', label: '进行中' },
   { value: 'blocked', label: '阻塞' },
   { value: 'completed', label: '已完成' },
@@ -324,6 +326,7 @@ const taskBoardStatusOptions = [
 
 const taskBoardStatusLabelMap = {
   draft: '草稿',
+  pending_execution: '待执行',
   in_progress: '进行中',
   blocked: '阻塞',
   completed: '已完成',
@@ -378,63 +381,162 @@ const filteredTaskBoardItems = computed(() => {
 })
 
 // Matrix board: 2-level rows — L1=project (collapsible), L2=priority group (collapsible)
-const KANBAN_STATUSES = ['draft', 'in_progress', 'blocked', 'completed', 'cancelled']
+const KANBAN_STATUSES = ['draft', 'pending_execution', 'in_progress', 'blocked', 'completed', 'cancelled']
 const KANBAN_PRIORITY_LABELS = { 1: 'P0', 2: 'P1', 3: 'P2', 4: 'P3' }
 const KANBAN_PRIORITY_ORDER = [1, 2, 3, 4]
 
+function getTaskPriority(item) {
+  const priority = Number(item?.priority ?? 3)
+  return KANBAN_PRIORITY_ORDER.includes(priority) ? priority : 3
+}
+
+function sortTaskBoardSiblings(items) {
+  return [...items].sort((a, b) => {
+    const priorityDiff = getTaskPriority(a) - getTaskPriority(b)
+    if (priorityDiff !== 0) return priorityDiff
+    const updatedDiff = String(b.updated_at || '').localeCompare(String(a.updated_at || ''))
+    if (updatedDiff !== 0) return updatedDiff
+    return String(a.name || '').localeCompare(String(b.name || ''))
+  })
+}
+
+function buildTaskTree(items) {
+  const nodesById = new Map()
+  const roots = []
+  for (const item of sortTaskBoardSiblings(items)) {
+    nodesById.set(item.id, { ...item, children: [] })
+  }
+  for (const node of nodesById.values()) {
+    const parentId = node.parent_task_id || null
+    const parent = parentId ? nodesById.get(parentId) : null
+    if (parent) {
+      parent.children.push(node)
+    } else {
+      roots.push(node)
+    }
+  }
+  const sortChildren = (node) => {
+    node.children = sortTaskBoardSiblings(node.children)
+    node.children.forEach(sortChildren)
+    return node
+  }
+  return sortTaskBoardSiblings(roots).map(sortChildren)
+}
+
+function countTaskTreeNodes(nodes) {
+  return nodes.reduce((sum, node) => sum + 1 + countTaskTreeNodes(node.children || []), 0)
+}
+
+function makeTaskNodeKey(item) {
+  return item?.id || ''
+}
+
+function findTaskBoardItemById(taskId) {
+  if (!taskId) return null
+  return taskBoardItems.value.find((item) => item.id === taskId) || null
+}
+
+const currentLinkedTaskId = computed(() => {
+  return dispatchActiveTask.value?.task_board_item_id
+    || selectedSession.value?.payload_json?.task_board_item_id
+    || dispatchTaskEvents.value.find((evt) => evt.payload?.task_board_item_id)?.payload?.task_board_item_id
+    || null
+})
+
+const currentLinkedTask = computed(() => findTaskBoardItemById(currentLinkedTaskId.value))
+
+const currentLoadedSkills = computed(() => {
+  const seen = new Set()
+  const items = []
+  for (const evt of dispatchTaskEvents.value) {
+    const payload = evt.payload || {}
+    const functionName = payload.function_name || payload.tool_name || ''
+    const skillName = payload.skill_name || (functionName === 'skill_view' ? extractSkillNameFromToolPayload(payload) : '')
+    if (!skillName || seen.has(skillName)) continue
+    seen.add(skillName)
+    items.push({
+      name: skillName,
+      file_path: payload.skill_file_path || '',
+      skill_type: 'builtin',
+      category: 'loaded',
+      description: payload.skill_file_path ? `已读取 ${payload.skill_file_path}` : '本轮会话已加载',
+    })
+  }
+  return items
+})
+
+function extractSkillNameFromToolPayload(payload) {
+  const args = payload.arguments || payload.function_args || payload.preview || ''
+  if (args && typeof args === 'object' && args.name) return String(args.name)
+  const text = typeof args === 'string' ? args : JSON.stringify(args || {})
+  const match = text.match(/name\s*=\s*['"]([^'"]+)['"]/) || text.match(/["']name["']\s*:\s*["']([^"']+)["']/)
+  return match?.[1] || ''
+}
+
+async function openLinkedTaskFromStatus() {
+  const taskId = currentLinkedTaskId.value
+  if (!taskId) return
+  if (!taskBoardItems.value.length) {
+    try { await loadTaskBoardItems() } catch (_) { /* ignore */ }
+  }
+  const item = findTaskBoardItemById(taskId)
+  if (item?.project_id) taskBoardProjectFilter.value = item.project_id
+  taskBoardKeyword.value = ''
+  taskBoardStatusFilter.value = ''
+  highlightedTaskBoardItemId.value = taskId
+  activePage.value = 'task-board'
+}
+
 const taskBoardMatrix = computed(() => {
-  const items = filteredTaskBoardItems.value
-  // Build nested: project → priority → columns
   const projectMap = new Map()
-  for (const item of items) {
+  for (const item of filteredTaskBoardItems.value) {
     const projectKey = item.project_id || '__none__'
     const projectName = item.project_name || '未关联项目'
-    const priority = item.priority ?? 3
     if (!projectMap.has(projectKey)) {
-      projectMap.set(projectKey, { id: projectKey, name: projectName, groups: new Map() })
-    }
-    const project = projectMap.get(projectKey)
-    if (!project.groups.has(priority)) {
-      project.groups.set(priority, {
-        id: `${projectKey}|${priority}`,
-        parentId: projectKey,
-        projectName: projectName,
-        priority: priority,
-        priorityLabel: KANBAN_PRIORITY_LABELS[priority] || 'P2',
+      projectMap.set(projectKey, {
+        id: projectKey,
+        name: projectName,
         columns: Object.fromEntries(KANBAN_STATUSES.map((s) => [s, []])),
       })
     }
-    const group = project.groups.get(priority)
+    const project = projectMap.get(projectKey)
     const status = KANBAN_STATUSES.includes(item.status) ? item.status : 'draft'
-    group.columns[status].push(item)
+    project.columns[status].push(item)
   }
-  // Convert to sorted array with groups ordered P0→P3
-  const rows = [...projectMap.values()]
-    .map((p) => ({
-      ...p,
-      groups: Array.from(p.groups.values()).sort((a, b) => a.priority - b.priority),
-    }))
+
+  return [...projectMap.values()]
+    .map((project) => {
+      const columns = Object.fromEntries(
+        KANBAN_STATUSES.map((status) => [status, buildTaskTree(project.columns[status])]),
+      )
+      return {
+        ...project,
+        columns,
+        taskCount: KANBAN_STATUSES.reduce((sum, status) => sum + countTaskTreeNodes(columns[status]), 0),
+      }
+    })
     .sort((a, b) => {
       if (a.id === '__none__') return 1
       if (b.id === '__none__') return -1
       return a.name.localeCompare(b.name)
     })
-  // Filter out empty priority groups? No — keep them so the structure is visible
-  return rows
 })
 
 const collapsedProjectRows = ref(new Set())
-const collapsedPriorityRows = ref(new Set())
+const collapsedTaskNodes = ref(new Set())
 
 function toggleProjectRow(projectId) {
   const s = new Set(collapsedProjectRows.value)
   if (s.has(projectId)) { s.delete(projectId) } else { s.add(projectId) }
   collapsedProjectRows.value = s
 }
-function togglePriorityRow(groupId) {
-  const s = new Set(collapsedPriorityRows.value)
-  if (s.has(groupId)) { s.delete(groupId) } else { s.add(groupId) }
-  collapsedPriorityRows.value = s
+
+function toggleTaskNode(item) {
+  const key = makeTaskNodeKey(item)
+  if (!key) return
+  const s = new Set(collapsedTaskNodes.value)
+  if (s.has(key)) { s.delete(key) } else { s.add(key) }
+  collapsedTaskNodes.value = s
 }
 
 const selectedCreateRepo = computed(() => {
@@ -1784,7 +1886,7 @@ function handleCreateInitialMessageKeydown(event) {
 
 async function sendMessageToHermes() {
   const trimmed = composerText.value.trim()
-  if (!trimmed || sending.value || dispatchIsRunning.value) {
+  if (!trimmed || sending.value) {
     return
   }
 
@@ -1792,6 +1894,13 @@ async function sendMessageToHermes() {
   errorMessage.value = ''
 
   try {
+    // A second user message while the AI is still running is an intentional correction.
+    // Stop the active run first, then start a new run in the same session with the corrected prompt.
+    if (dispatchIsRunning.value && dispatchIsCancellable.value) {
+      await cancelDispatchTask()
+      clearActiveTask()
+    }
+
     // If there is an active dispatch task awaiting input or paused, resume it.
     if (dispatchTaskId.value && dispatchIsResumable.value) {
       composerText.value = ''
@@ -2057,20 +2166,26 @@ onUnmounted(() => {
             <div class="conversation-latest-status" :class="`status-${conversationLatestStatus.tone}`">
               <span class="latest-status-label">会话状态</span>
               <span class="latest-status-text">{{ conversationLatestStatus.text }}</span>
+              <button v-if="currentLinkedTask" type="button" class="status-task-chip" @click="openLinkedTaskFromStatus">
+                {{ currentLinkedTask.project_name || '未关联项目' }} · {{ currentLinkedTask.name }} · {{ taskBoardStatusLabelMap[currentLinkedTask.status] || currentLinkedTask.status }} · {{ KANBAN_PRIORITY_LABELS[getTaskPriority(currentLinkedTask)] }}
+              </button>
+              <span v-if="currentLoadedSkills.length" class="status-skill-group">
+                <button v-for="skill in currentLoadedSkills" :key="skill.name + skill.file_path" type="button" class="status-skill-chip" @click="openSkillDetail(skill)">{{ skill.name }}</button>
+              </span>
               <span class="latest-status-time">{{ conversationLatestStatus.time }}</span>
             </div>
             <textarea
               v-model="composerText"
               class="composer-input"
-              :disabled="sending || dispatchIsRunning"
-              :placeholder="dispatchAwaitingInput ? 'AI 正在等待你的回复...' : '输入消息，直接与 AI 对话'"
+              :disabled="sending"
+              :placeholder="dispatchIsRunning ? '输入修正内容，将打断当前 AI 回复并重新发送' : (dispatchAwaitingInput ? 'AI 正在等待你的回复...' : '输入消息，直接与 AI 对话')"
               @keydown="handleComposerKeydown"
             ></textarea>
             <button v-if="dispatchIsCancellable" class="composer-send composer-cancel" type="button" @click="cancelDispatchTask">
               取消任务
             </button>
-            <button v-else class="composer-send" type="submit" :disabled="sending || !composerText.trim() || dispatchIsRunning">
-              {{ sending || dispatchIsRunning ? '处理中...' : '发送' }}
+            <button v-else class="composer-send" type="submit" :disabled="sending || !composerText.trim()">
+              {{ sending ? '处理中...' : (dispatchIsRunning ? '打断并发送' : '发送') }}
             </button>
           </form>
         </article>
@@ -2133,7 +2248,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Matrix Kanban: columns=statuses, rows=projects -->
+          <!-- Matrix Kanban: columns=statuses, rows=projects; cards render parent/child task trees -->
           <div class="kanban-matrix-wrap">
             <div class="kanban-matrix-header">
               <div class="kanban-row-label-head"></div>
@@ -2144,77 +2259,90 @@ onUnmounted(() => {
             </div>
             <template v-if="taskBoardMatrix.length > 0">
               <template v-for="project in taskBoardMatrix" :key="project.id">
-                <!-- L1: project row header -->
                 <div class="kanban-project-row kanban-project-l1">
-                  <div class="kanban-row-header" @click="toggleProjectRow(project.id)">
+                  <button type="button" class="kanban-row-header" @click="toggleProjectRow(project.id)">
                     <span class="kanban-collapse-icon">{{ collapsedProjectRows.has(project.id) ? '▶' : '▼' }}</span>
                     <span class="kanban-project-name">{{ project.name }}</span>
-                    <span class="kanban-project-count muted">{{ project.groups.reduce((n, g) => n + Object.values(g.columns).reduce((m, arr) => m + arr.length, 0), 0) }} 项</span>
-                  </div>
+                    <span class="kanban-project-count muted">{{ project.taskCount }} 项</span>
+                  </button>
                 </div>
-                <!-- L2: priority group rows (hidden when project collapsed) -->
-                <template v-if="!collapsedProjectRows.has(project.id)">
-                  <template v-for="group in project.groups" :key="group.id">
-                    <div class="kanban-project-row kanban-priority-l2">
-                      <div class="kanban-row-header kanban-row-sub" @click="togglePriorityRow(group.id)">
-                        <span class="kanban-collapse-icon">{{ collapsedPriorityRows.has(group.id) ? '▶' : '▼' }}</span>
-                        <span class="priority-badge" :class="'priority-P' + group.priority" style="margin-right:6px;">{{ group.priorityLabel }}</span>
-                        <span class="kanban-project-count muted">{{ Object.values(group.columns).reduce((n, arr) => n + arr.length, 0) }} 项</span>
-                      </div>
-                    </div>
-                    <!-- L3: status columns (hidden when priority row collapsed) -->
-                    <div v-if="!collapsedPriorityRows.has(group.id)" class="kanban-row-columns">
-                      <div class="kanban-row-spacer"></div>
+                <div v-if="!collapsedProjectRows.has(project.id)" class="kanban-row-columns">
+                  <div class="kanban-row-spacer"></div>
+                  <div
+                    v-for="s in KANBAN_STATUSES"
+                    :key="s"
+                    class="kanban-cell"
+                    :class="{ 'kanban-cell-drop-active': draggingTaskBoardItemId }"
+                    @dragover.prevent
+                    @drop.prevent="handleTaskBoardDrop(s, $event)"
+                  >
+                    <div v-if="project.columns[s].length === 0" class="kanban-cell-empty">拖到这里</div>
+                    <template v-for="item in project.columns[s]" :key="item.id">
                       <div
-                        v-for="s in KANBAN_STATUSES"
-                        :key="s"
-                        class="kanban-cell"
-                        :class="{ 'kanban-cell-drop-active': draggingTaskBoardItemId }"
-                        @dragover.prevent
-                        @drop.prevent="handleTaskBoardDrop(s, $event)"
+                        class="task-board-card"
+                        :class="{ 'task-board-card-dragging': draggingTaskBoardItemId === item.id, 'task-board-card-highlighted': highlightedTaskBoardItemId === item.id }"
+                        draggable="true"
+                        @dragstart="handleTaskBoardDragStart(item, $event)"
+                        @dragend="handleTaskBoardDragEnd"
                       >
-                        <div v-if="group.columns[s].length === 0" class="kanban-cell-empty">拖到这里</div>
-                        <div
-                          v-for="item in group.columns[s]"
-                          :key="item.id"
-                          class="task-board-card"
-                          :class="{ 'task-board-card-dragging': draggingTaskBoardItemId === item.id }"
-                          draggable="true"
-                          @dragstart="handleTaskBoardDragStart(item, $event)"
-                          @dragend="handleTaskBoardDragEnd"
-                        >
-                          <div class="task-board-card-top">
-                            <div class="task-board-title-wrap">
-                              <div class="task-board-name">{{ item.name }}</div>
+                        <div class="task-board-card-top">
+                          <div class="task-board-title-wrap">
+                            <div class="task-board-name-row">
+                              <button v-if="item.children.length" type="button" class="task-tree-toggle" @click.stop="toggleTaskNode(item)">{{ collapsedTaskNodes.has(item.id) ? '▶' : '▼' }}</button>
+                              <span v-else class="task-tree-spacer"></span>
+                              <span class="task-board-name">{{ item.name }}</span>
                             </div>
-                            <div class="task-board-card-actions">
-                              <select
-                                class="priority-badge priority-select"
-                                :class="`priority-P${item.priority || 3}`"
-                                :value="item.priority || 3"
-                                :disabled="quickUpdatingTaskBoardItemId === item.id"
-                                aria-label="调整任务优先级"
-                                @change.stop="updateTaskBoardPriority(item, $event)"
-                                @click.stop
-                              >
-                                <option v-for="opt in taskBoardPriorityOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                              </select>
-                              <button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(item)">详情</button>
-                              <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
-                              <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
-                              <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click.stop="deleteTaskBoardItem(item)">{{ deletingTaskBoardItemId === item.id ? '...' : '删除' }}</button>
+                            <div class="task-board-badges">
+                              <span class="priority-badge" :class="`priority-P${getTaskPriority(item) - 1}`">{{ KANBAN_PRIORITY_LABELS[getTaskPriority(item)] }}</span>
+                              <span v-if="item.children.length" class="task-child-count">{{ item.children.length }} 子任务</span>
                             </div>
                           </div>
-                          <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
-                          <div class="task-board-meta task-board-meta-inline">
-                            <span class="task-board-meta-label">{{ item.ai_platform }}</span>
-                            <span class="task-board-meta-label muted">{{ formatSessionTime(item.updated_at) }}</span>
+                          <div class="task-board-card-actions">
+                            <select class="priority-badge priority-select" :class="`priority-P${getTaskPriority(item) - 1}`" :value="getTaskPriority(item)" :disabled="quickUpdatingTaskBoardItemId === item.id" aria-label="调整任务优先级" @change.stop="updateTaskBoardPriority(item, $event)" @click.stop>
+                              <option v-for="opt in taskBoardPriorityOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                            </select>
+                            <button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(item)">详情</button>
+                            <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
+                            <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
+                            <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click.stop="deleteTaskBoardItem(item)">{{ deletingTaskBoardItemId === item.id ? '...' : '删除' }}</button>
                           </div>
                         </div>
+                        <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
+                        <div class="task-board-meta task-board-meta-inline">
+                          <span class="task-board-meta-label">{{ item.ai_platform }}</span>
+                          <span class="task-board-meta-label muted">{{ formatSessionTime(item.updated_at) }}</span>
+                        </div>
+                        <div v-if="item.children.length && !collapsedTaskNodes.has(item.id)" class="task-tree-children">
+                          <template v-for="child in item.children" :key="child.id">
+                            <div class="task-board-card task-board-card-child" :class="{ 'task-board-card-highlighted': highlightedTaskBoardItemId === child.id }" draggable="true" @dragstart="handleTaskBoardDragStart(child, $event)" @dragend="handleTaskBoardDragEnd">
+                              <div class="task-board-card-top">
+                                <div class="task-board-title-wrap">
+                                  <div class="task-board-name-row">
+                                    <button v-if="child.children.length" type="button" class="task-tree-toggle" @click.stop="toggleTaskNode(child)">{{ collapsedTaskNodes.has(child.id) ? '▶' : '▼' }}</button>
+                                    <span v-else class="task-tree-spacer"></span>
+                                    <span class="task-board-name">{{ child.name }}</span>
+                                  </div>
+                                  <div class="task-board-badges">
+                                    <span class="priority-badge" :class="`priority-P${getTaskPriority(child) - 1}`">{{ KANBAN_PRIORITY_LABELS[getTaskPriority(child)] }}</span>
+                                    <span v-if="child.children.length" class="task-child-count">{{ child.children.length }} 子任务</span>
+                                  </div>
+                                </div>
+                                <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(child)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(child)">编辑</button></div>
+                              </div>
+                              <div class="task-board-desc task-board-desc-compact">{{ child.description || '暂无描述' }}</div>
+                              <div v-if="child.children.length && !collapsedTaskNodes.has(child.id)" class="task-tree-children">
+                                <div v-for="grandchild in child.children" :key="grandchild.id" class="task-board-card task-board-card-child task-board-card-grandchild" :class="{ 'task-board-card-highlighted': highlightedTaskBoardItemId === grandchild.id }">
+                                  <div class="task-board-card-top"><div class="task-board-title-wrap"><div class="task-board-name-row"><span class="task-tree-spacer"></span><span class="task-board-name">{{ grandchild.name }}</span></div><div class="task-board-badges"><span class="priority-badge" :class="`priority-P${getTaskPriority(grandchild) - 1}`">{{ KANBAN_PRIORITY_LABELS[getTaskPriority(grandchild)] }}</span></div></div><div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(grandchild)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(grandchild)">编辑</button></div></div>
+                                  <div class="task-board-desc task-board-desc-compact">{{ grandchild.description || '暂无描述' }}</div>
+                                </div>
+                              </div>
+                            </div>
+                          </template>
+                        </div>
                       </div>
-                    </div>
-                  </template>
-                </template>
+                    </template>
+                  </div>
+                </div>
               </template>
             </template>
             <div v-else class="project-empty">暂无任务，点击"新建任务"开始。</div>

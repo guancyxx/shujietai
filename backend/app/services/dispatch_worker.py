@@ -24,6 +24,45 @@ logger = logging.getLogger(__name__)
 _AWAITING_INPUT_MARKER = "[AWAITING_INPUT]"
 
 
+def _stringify_tool_args(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        import json
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return str(value)
+
+
+def _normalize_tool_payload(chunk: dict[str, Any], *, tool_call_id: str) -> dict[str, Any]:
+    tool_name = str(chunk.get("tool") or chunk.get("tool_name") or chunk.get("function_name") or "tool")
+    function_name = str(chunk.get("function_name") or tool_name)
+    arguments = chunk.get("arguments")
+    function_args = chunk.get("function_args")
+    preview = chunk.get("preview") or ""
+    if function_args is None:
+        function_args = arguments if arguments is not None else preview
+
+    payload: dict[str, Any] = {
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "function_name": function_name,
+        "preview": preview,
+        "function_args": _stringify_tool_args(function_args),
+    }
+    if arguments is not None:
+        payload["arguments"] = arguments
+    if chunk.get("skill_name"):
+        payload["skill_name"] = chunk["skill_name"]
+    if chunk.get("skill_file_path"):
+        payload["skill_file_path"] = chunk["skill_file_path"]
+    if chunk.get("raw_event") is not None:
+        payload["raw_event"] = chunk["raw_event"]
+    return payload
+
+
 def _tool_call_id(chunk: dict[str, Any]) -> str:
     raw = str(chunk.get("id") or "").strip()
     if raw:
@@ -272,57 +311,57 @@ class TaskWorker:
 
             elif chunk_type == "tool_start":
                 # Emitted by HermesRunsConnector when a tool invocation begins.
-                tool_name = chunk.get("tool", "tool")
-                tool_preview = chunk.get("preview") or ""
-                tool_call_id = f"run_tool_{tool_name}_{id(chunk)}"
+                tool_name = str(chunk.get("tool") or chunk.get("tool_name") or chunk.get("function_name") or "tool")
+                tool_call_id = str(chunk.get("tool_call_id") or chunk.get("id") or f"run_tool_{tool_name}_{id(chunk)}")
+                payload = _normalize_tool_payload(chunk, tool_call_id=tool_call_id)
                 self._tool_calls_in_flight[tool_call_id] = {
-                    "function_name": tool_name,
-                    "function_args": tool_preview,
+                    "function_name": payload["function_name"],
+                    "tool_name": payload["tool_name"],
+                    "function_args": payload.get("function_args", ""),
                     "index": len(self._tool_calls_in_flight),
                     "id": tool_call_id,
                     "started_at": __import__("time").monotonic(),
+                    "payload": payload,
                 }
                 await self._emit_event(
                     "tool_call",
-                    {
-                        "tool_call_id": tool_call_id,
-                        "function_name": tool_name,
-                        "preview": tool_preview,
-                    },
+                    payload,
                     event_name="tool.call.started",
                     status=self._task.status,
                     tool_call_id=tool_call_id,
                 )
 
             elif chunk_type == "tool_complete":
-                # Match the in-flight record by tool name (best-effort; runs
-                # connector does not have stable opaque IDs across start/complete).
-                tool_name = chunk.get("tool", "")
-                matched_id: str | None = None
-                for tid, state in self._tool_calls_in_flight.items():
-                    if state.get("function_name") == tool_name:
-                        matched_id = tid
-                        break
+                # Match the in-flight record by stable id first, then tool name.
+                tool_name = str(chunk.get("tool") or chunk.get("tool_name") or chunk.get("function_name") or "tool")
+                matched_id = str(chunk.get("tool_call_id") or chunk.get("id") or "") or None
+                if matched_id not in self._tool_calls_in_flight:
+                    matched_id = None
+                    for tid, state in self._tool_calls_in_flight.items():
+                        if state.get("tool_name") == tool_name or state.get("function_name") == tool_name:
+                            matched_id = tid
+                            break
                 if matched_id is None:
-                    # Fallback: create a synthetic completed record.
                     matched_id = f"run_tool_{tool_name}_complete"
 
                 duration = chunk.get("duration")
                 is_error = bool(chunk.get("error", False))
-                started = (self._tool_calls_in_flight.get(matched_id) or {}).get("started_at")
+                state = self._tool_calls_in_flight.get(matched_id) or {}
+                started = state.get("started_at")
                 if duration is None and started is not None:
                     import time
                     duration = round(time.monotonic() - started, 3)
 
+                base_payload = dict(state.get("payload") or {})
+                base_payload.update(_normalize_tool_payload(chunk, tool_call_id=matched_id))
+                base_payload["duration"] = duration
+                base_payload["duration_ms"] = round(float(duration) * 1000) if duration is not None else None
+                base_payload["error"] = is_error
+
                 self._tool_calls_in_flight.pop(matched_id, None)
                 await self._emit_event(
                     "tool_call",
-                    {
-                        "tool_call_id": matched_id,
-                        "function_name": tool_name,
-                        "duration": duration,
-                        "error": is_error,
-                    },
+                    base_payload,
                     event_name="tool.call.completed",
                     status=self._task.status,
                     tool_call_id=matched_id,
