@@ -31,7 +31,7 @@ async def run_pending_execution_loop(
 
     while True:
         try:
-            await process_pending_execution_once(
+            process_pending_execution_once(
                 dispatch_service=dispatch_service,
                 worker_pool=worker_pool,
                 limit=config.batch_size,
