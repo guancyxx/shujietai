@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.schemas import (
     DispatchCreateRequest,
@@ -143,10 +143,17 @@ def abort_dispatch_task(task_id: str) -> DispatchTaskItem:
 
 
 @router.post("/emergency-stop", response_model=EmergencyStopResponse)
-def emergency_stop() -> EmergencyStopResponse:
+def emergency_stop(request: Request) -> EmergencyStopResponse:
+    # Audit log: record caller IP and timestamp
+    client_ip = request.client.host if request.client else "unknown"
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"[AUDIT] emergency-stop called from {client_ip}")
+
     svc = _get_dispatch_service()
     pool = _get_worker_pool()
 
     pool.cancel_all()
     cancelled_count = svc.emergency_stop()
+    logger.warning(f"[AUDIT] emergency-stop completed, cancelled {cancelled_count} tasks")
     return EmergencyStopResponse(cancelled_count=cancelled_count)
