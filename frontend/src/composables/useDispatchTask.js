@@ -195,6 +195,7 @@ async function createDispatchTask({
     on('completed', handleTaskEvent)
     on('error', handleTaskEvent)
     on('cancelled', handleTaskEvent)
+    on('interrupted', handleTaskEvent)
 
     // Subscribe via WebSocket
     subscribe(task.id)
@@ -309,6 +310,30 @@ async function abortDispatchTask() {
   }
 }
 
+// Interrupt running task with user correction (non-terminal, restarts AI)
+async function interruptDispatchTask(userMessage) {
+  if (!activeTaskId.value || !isTaskCancellable.value) return
+
+  taskLoading.value = true
+  taskError.value = ''
+
+  try {
+    const task = await postJson(`${apiBase}/api/v1/dispatch/${activeTaskId.value}/interrupt`, {
+      user_message: userMessage,
+      mode: 'revise',
+    })
+    activeTask.value = task
+    // Re-subscribe to catch the restarted run's events
+    subscribe(task.id)
+    return task
+  } catch (error) {
+    taskError.value = formatTaskError(error)
+    throw error
+  } finally {
+    taskLoading.value = false
+  }
+}
+
 // Clear active task and unsubscribe
 function clearActiveTask() {
   if (activeTaskId.value) {
@@ -322,6 +347,7 @@ function clearActiveTask() {
   off('completed', handleTaskEvent)
   off('error', handleTaskEvent)
   off('cancelled', handleTaskEvent)
+  off('interrupted', handleTaskEvent)
 
   activeTaskId.value = null
   activeTask.value = null
@@ -522,6 +548,15 @@ const dispatchMessages = computed(() => {
         meta_json: { error: true },
         _groupKey: 'error',
       })
+    } else if (evt.event_type === 'interrupted') {
+      messages.push({
+        id: evt.id,
+        role: 'system',
+        content: `✏️ 用户打断了当前回答，正在按修正意见重新生成...`,
+        created_at: evt.created_at,
+        meta_json: { interrupted: true },
+        _groupKey: 'interrupted',
+      })
     }
   }
 
@@ -547,6 +582,7 @@ export function useDispatchTask() {
     resumeDispatchTask,
     cancelDispatchTask,
     abortDispatchTask,
+    interruptDispatchTask,
     clearActiveTask,
 
     // Expose for dispatch task restore on page refresh

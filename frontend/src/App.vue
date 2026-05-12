@@ -107,6 +107,7 @@ const {
   resumeDispatchTask,
   cancelDispatchTask,
   abortDispatchTask,
+  interruptDispatchTask,
   clearActiveTask,
   handleTaskEvent,
   handleTaskStatus,
@@ -1955,14 +1956,11 @@ async function sendMessageToHermes() {
 
   try {
     // A second user message while the AI is still running is an intentional correction.
-    // Stop the active run first, then start a new run in the same session with the corrected prompt.
+    // Interrupt the current run (non-terminal), append the correction, and restart.
     if (dispatchIsRunning.value && dispatchIsCancellable.value) {
-      await cancelDispatchTask()
-      clearActiveTask()
-    }
-
-    // If there is an active dispatch task awaiting input or paused, resume it.
-    if (dispatchTaskId.value && dispatchIsResumable.value) {
+      composerText.value = ''
+      await interruptDispatchTask(trimmed)
+    } else if (dispatchTaskId.value && dispatchIsResumable.value) {
       composerText.value = ''
       await resumeDispatchTask(trimmed)
     } else {

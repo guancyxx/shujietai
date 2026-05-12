@@ -320,6 +320,11 @@ class DispatchCreateRequest(BaseModel):
     mcp_servers: list[str] | None = None
 
 
+class InterruptRequest(BaseModel):
+    user_message: str = Field(min_length=1, max_length=8000)
+    mode: str = Field(default="revise", min_length=1, max_length=32)
+
+
 class DispatchResumeRequest(BaseModel):
     user_message: str = Field(min_length=1, max_length=8000)
 

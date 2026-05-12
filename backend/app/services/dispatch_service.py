@@ -415,6 +415,14 @@ class DispatchService:
     def abort_task(self, task_id: str) -> DispatchTaskItem | None:
         return self.transition_task(task_id, "aborted")
 
+    def interrupt_task(self, task_id: str, user_message: str) -> DispatchTaskItem | None:
+        """Record an interrupt on a running task — keeps it non-terminal.
+
+        The task stays in 'running' status. Events are appended by the worker.
+        """
+        _ = user_message  # used in worker-issued events, kept for signature clarity
+        return self.get_task(task_id)  # re-read from DB for freshness
+
     def emergency_stop(self) -> int:
         """Cancel all running/queued tasks. Returns the number of cancelled tasks."""
         with self._session_factory.begin() as db:
@@ -460,19 +468,53 @@ class DispatchService:
             return [_entity_to_item(r) for r in rows]
 
     def reconstruct_history(self, task_id: str) -> list[dict[str, str]]:
-        """Reconstruct message history from dispatch events for session resumption."""
+        """Reconstruct message history from dispatch events for session resumption.
+
+        Merges consecutive content_deltas of the same role into single messages.
+        After a task.interrupted event, discards the partial assistant output from
+        the old run (it's preserved in UI events but not fed back to the AI).
+        """
         events = self.list_events(task_id, limit=10000)
         history: list[dict[str, str]] = []
+        saw_interrupted = False
+        discarding_old_assistant = False
         for event in events:
+            if event.event_type == "interrupted":
+                saw_interrupted = True
+                discarding_old_assistant = True
+                # Discard the stale partial assistant content that was being accumulated
+                while history and history[-1]["role"] == "assistant":
+                    history.pop()
+                continue
             if event.event_type == "content_delta":
                 role = event.payload.get("role", "assistant")
                 content = event.payload.get("content", "")
                 if role in ("user", "assistant", "system") and content:
-                    history.append({"role": role, "content": content})
+                    if discarding_old_assistant:
+                        if role == "assistant":
+                            # Still discarding old-run assistant deltas
+                            pass
+                        else:
+                            # First non-assistant message after interrupt stops discarding
+                            discarding_old_assistant = False
+                            history.append({"role": role, "content": content})
+                    elif not saw_interrupted:
+                        if history and history[-1]["role"] == role:
+                            history[-1]["content"] += content
+                        else:
+                            history.append({"role": role, "content": content})
+                    else:
+                        # After interrupt, post-discard: merge like normal
+                        if history and history[-1]["role"] == role:
+                            history[-1]["content"] += content
+                        else:
+                            history.append({"role": role, "content": content})
             elif event.event_type == "content_full":
                 role = event.payload.get("role", "assistant")
                 content = event.payload.get("content", "")
                 if role in ("user", "assistant", "system") and content:
+                    if history and history[-1]["role"] == role:
+                        history.pop()
                     history.append({"role": role, "content": content})
         return history
 
