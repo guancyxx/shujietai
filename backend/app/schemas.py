@@ -313,6 +313,7 @@ class DispatchCreateRequest(BaseModel):
     task_board_item_id: str | None = Field(default=None, max_length=64)
     ai_platform: str = Field(default="hermes", min_length=1, max_length=64)
     initial_prompt: str = Field(min_length=1, max_length=16000)
+    external_session_id: str | None = Field(default=None, max_length=255)
     system_prompt: str | None = Field(default=None, max_length=4000)
     model: str | None = Field(default=None, max_length=128)
     skills: list[str] | None = None
