@@ -3,11 +3,14 @@
 Exposes structured lifecycle events from Hermes runs API:
 
   content_delta   — streaming text chunk
-  tool_start      — tool invocation began  (tool name + preview)
+  tool_start      — tool invocation began  (tool name + preview + arguments)
   tool_complete   — tool invocation ended  (duration, error flag)
   agent_thinking  — reasoning text (only for extended-thinking-capable models)
   finish          — run completed successfully
   error           — run failed or cancelled
+
+For skill_view events, skill name and file path are extracted from event
+arguments and preserved in normalized payload fields.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+import re
 from typing import Any, AsyncIterator
 
 import httpx
@@ -29,14 +33,108 @@ _POST_TIMEOUT = 30.0
 _STREAM_IDLE_TIMEOUT = 90.0
 
 
+def _find_first_mapping(*values: Any) -> dict[str, Any] | None:
+    for value in values:
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _decode_preview_json(preview: Any) -> dict[str, Any] | None:
+    if not isinstance(preview, str) or not preview.strip():
+        return None
+    try:
+        decoded = _json.loads(preview)
+    except _json.JSONDecodeError:
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _extract_skill_name(tool_name: str, preview: Any, arguments: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    if tool_name != "skill_view":
+        return None, None
+
+    if arguments:
+        name = arguments.get("name")
+        file_path = arguments.get("file_path")
+        if name:
+            return str(name), str(file_path or "") or None
+
+    preview_args = _decode_preview_json(preview)
+    if preview_args:
+        name = preview_args.get("name")
+        file_path = preview_args.get("file_path")
+        if name:
+            return str(name), str(file_path or "") or None
+
+    preview_text = str(preview or "")
+    patterns = [
+        r"name\s*=\s*'([^']+)'",
+        r"name\s*=\s*\"([^\"]+)\"",
+        r"\"name\"\s*:\s*\"([^\"]+)\"",
+        r"'name'\s*:\s*'([^']+)'",
+    ]
+    skill_name = None
+    for pattern in patterns:
+        match = re.search(pattern, preview_text)
+        if match:
+            skill_name = match.group(1)
+            break
+
+    file_match = None
+    file_patterns = [
+        r"file_path\s*=\s*'([^']+)'",
+        r"file_path\s*=\s*\"([^\"]+)\"",
+        r"\"file_path\"\s*:\s*\"([^\"]+)\"",
+        r"'file_path'\s*:\s*'([^']+)'",
+    ]
+    for pat in file_patterns:
+        file_match = re.search(pat, preview_text)
+        if file_match:
+            break
+
+    return skill_name, (file_match.group(1) if file_match else None)
+
+
+def _normalize_tool_event(event: dict[str, Any], *, completed: bool) -> dict[str, Any]:
+    tool_name = str(event.get("tool") or event.get("tool_name") or event.get("function_name") or "")
+    preview = event.get("preview")
+    arguments = _find_first_mapping(
+        event.get("arguments"),
+        event.get("args"),
+        event.get("function_args"),
+        event.get("input"),
+        _decode_preview_json(preview),
+    )
+    skill_name, skill_file_path = _extract_skill_name(tool_name, preview, arguments)
+    payload: dict[str, Any] = {
+        "type": "tool_complete" if completed else "tool_start",
+        "tool": tool_name,
+        "tool_name": tool_name,
+        "function_name": tool_name,
+        "preview": preview,
+        "arguments": arguments,
+        "raw_event": event,
+    }
+    if event.get("id") or event.get("tool_call_id"):
+        payload["tool_call_id"] = event.get("tool_call_id") or event.get("id")
+    if skill_name:
+        payload["skill_name"] = skill_name
+    if skill_file_path:
+        payload["skill_file_path"] = skill_file_path
+    if completed:
+        payload["duration"] = event.get("duration")
+        payload["error"] = bool(event.get("error", False))
+    return payload
+
+
 class HermesConnector:
     """Hermes-native agent runs connector.
 
     Uses POST /v1/runs to start a run then GET /v1/runs/{run_id}/events to
     consume the structured SSE lifecycle stream.
 
-    Platform name ``hermes_runs`` — register alongside ``hermes`` to let
-    callers choose which flavour they want via ``ai_platform`` on the task.
+    Platform name ``hermes`` — the canonical connector for all Hermes dispatch tasks.
     """
 
     platform_name = "hermes"
@@ -65,8 +163,8 @@ class HermesConnector:
 
         Yielded chunk shapes:
           {"type": "content_delta", "content": str}
-          {"type": "tool_start",    "tool": str, "preview": str | None}
-          {"type": "tool_complete", "tool": str, "duration": float | None, "error": bool}
+          {"type": "tool_start",    "tool": str, "tool_name": str, ...}
+          {"type": "tool_complete", "tool": str, "duration": float | None, "error": bool, ...}
           {"type": "agent_thinking","text": str}
           {"type": "finish",        "finish_reason": "stop", "usage": dict}
           {"type": "error",         "error": str}
@@ -95,7 +193,7 @@ class HermesConnector:
                 history.append(msg)
 
         if not user_input:
-            yield {"type": "error", "error": "hermes_runs_connector: no user message found"}
+            yield {"type": "error", "error": "hermes_connector: no user message found"}
             return
 
         # Remove the final user turn from history (it becomes the run input).
@@ -133,10 +231,10 @@ class HermesConnector:
             return
 
         if not run_id:
-            yield {"type": "error", "error": "hermes_runs_connector: no run_id returned"}
+            yield {"type": "error", "error": "hermes_connector: no run_id returned"}
             return
 
-        logger.debug("[hermes_runs] started run %s", run_id)
+        logger.debug("[hermes] started run %s", run_id)
 
         # --- Step 2: subscribe to SSE event stream ---
         try:
@@ -169,19 +267,10 @@ class HermesConnector:
                                 yield {"type": "content_delta", "content": delta}
 
                         elif etype == "tool.started":
-                            yield {
-                                "type": "tool_start",
-                                "tool": event.get("tool", ""),
-                                "preview": event.get("preview"),
-                            }
+                            yield _normalize_tool_event(event, completed=False)
 
                         elif etype == "tool.completed":
-                            yield {
-                                "type": "tool_complete",
-                                "tool": event.get("tool", ""),
-                                "duration": event.get("duration"),
-                                "error": bool(event.get("error", False)),
-                            }
+                            yield _normalize_tool_event(event, completed=True)
 
                         elif etype == "reasoning.available":
                             text = event.get("text", "")
@@ -207,7 +296,7 @@ class HermesConnector:
             # already got run.completed; otherwise it is an error.
             yield {"type": "error", "error": f"hermes_runs_stream_closed: {exc}"}
         except Exception as exc:
-            logger.exception("[hermes_runs] run %s stream error", run_id)
+            logger.exception("[hermes] run %s stream error", run_id)
             yield {"type": "error", "error": f"hermes_runs_stream_exception: {exc}"}
 
 
