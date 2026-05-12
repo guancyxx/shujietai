@@ -526,12 +526,20 @@ const collapsedProjectRows = ref(new Set())
 const collapsedTaskNodes = ref(new Set())
 const collapsedKanbanStatuses = ref(new Set(['completed']))
 
+const KANBAN_ROW_LABEL_WIDTH = 180
+const KANBAN_EXPANDED_COLUMN_WIDTH = 190
+const KANBAN_COLLAPSED_COLUMN_WIDTH = 72
+
 const kanbanGridTemplate = computed(() => [
-  '180px',
+  `${KANBAN_ROW_LABEL_WIDTH}px`,
   ...KANBAN_STATUSES.map((status) => (
-    collapsedKanbanStatuses.value.has(status) ? 'minmax(72px, 0.35fr)' : 'minmax(150px, 1fr)'
+    collapsedKanbanStatuses.value.has(status) ? `${KANBAN_COLLAPSED_COLUMN_WIDTH}px` : `${KANBAN_EXPANDED_COLUMN_WIDTH}px`
   )),
 ].join(' '))
+
+const kanbanMatrixMinWidth = computed(() => `${KANBAN_ROW_LABEL_WIDTH + KANBAN_STATUSES.reduce((sum, status) => {
+  return sum + (collapsedKanbanStatuses.value.has(status) ? KANBAN_COLLAPSED_COLUMN_WIDTH : KANBAN_EXPANDED_COLUMN_WIDTH)
+}, 0)}px`)
 
 function isKanbanStatusCollapsible(status) {
   return COLLAPSIBLE_KANBAN_STATUSES.includes(status)
@@ -2273,7 +2281,7 @@ onUnmounted(() => {
 
           <!-- Matrix Kanban: columns=statuses, rows=projects; cards render parent/child task trees -->
           <div class="kanban-matrix-wrap">
-            <div class="kanban-matrix-header" :style="{ gridTemplateColumns: kanbanGridTemplate }">
+            <div class="kanban-matrix-header" :style="{ gridTemplateColumns: kanbanGridTemplate, minWidth: kanbanMatrixMinWidth }">
               <div class="kanban-row-label-head"></div>
               <div v-for="s in KANBAN_STATUSES" :key="s" class="kanban-col-header" :class="['kanban-col-' + s, { 'kanban-col-collapsed': isKanbanStatusCollapsed(s) }]">
                 <span class="kanban-status-dot" :class="'task-status-' + s"></span>
@@ -2299,7 +2307,7 @@ onUnmounted(() => {
                     <span class="kanban-project-count muted">{{ project.taskCount }} 项</span>
                   </button>
                 </div>
-                <div v-if="!collapsedProjectRows.has(project.id)" class="kanban-row-columns" :style="{ gridTemplateColumns: kanbanGridTemplate }">
+                <div v-if="!collapsedProjectRows.has(project.id)" class="kanban-row-columns" :style="{ gridTemplateColumns: kanbanGridTemplate, minWidth: kanbanMatrixMinWidth }">
                   <div class="kanban-row-spacer"></div>
                   <div
                     v-for="s in KANBAN_STATUSES"
