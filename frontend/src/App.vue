@@ -2034,6 +2034,15 @@ onUnmounted(() => {
                 message.meta_json?.thinking ? 'msg-thinking' : '',
                 message.meta_json?.tool_call ? 'msg-tool' : '',
                 message.meta_json?.streaming ? 'streaming' : '',
+                message.meta_json?.completed ? 'msg-completed msg-system' : '',
+                message.meta_json?.cancelled ? 'msg-cancelled msg-system' : '',
+                message.meta_json?.failed ? 'msg-failed msg-system' : '',
+                message.meta_json?.error ? 'msg-error msg-system' : '',
+                message.meta_json?.interrupted ? 'msg-interrupted msg-system' : '',
+                message.meta_json?.progress ? 'msg-progress msg-system' : '',
+                message.meta_json?.status_event ? 'msg-status msg-system' : '',
+                message.meta_json?.await_input ? 'msg-await-input msg-system' : '',
+                message.meta_json?.content_full ? 'msg-content-full msg-system' : '',
               ]"
             >
               <!-- Thinking bubble (collapsible) -->

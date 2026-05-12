@@ -1203,3 +1203,33 @@ details[open] .thinking-summary::before {
   border-color: rgba(101, 220, 255, 0.72);
   box-shadow: 0 0 6px rgba(52, 205, 255, 0.25);
 }
+
+/* --- AI event type indicators (split rendering) --- */
+
+/* System event messages — compact style for non-chat timeline items */
+.timeline-item.msg-system {
+  width: 100%;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: rgba(182, 210, 245, 0.65);
+}
+
+.timeline-item.msg-system .role-chip { display: none; }
+.timeline-item.msg-system .timeline-meta { display: none; }
+.timeline-item.msg-system .timeline-content {
+  margin-top: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Event type-specific accent colors */
+.timeline-item.msg-completed .timeline-content { color: rgba(130, 230, 160, 0.9); }
+.timeline-item.msg-cancelled .timeline-content { color: rgba(255, 180, 130, 0.85); }
+.timeline-item.msg-failed .timeline-content { color: rgba(255, 110, 110, 0.9); }
+.timeline-item.msg-progress .timeline-content { color: rgba(160, 200, 255, 0.8); }
+.timeline-item.msg-status .timeline-content { color: rgba(200, 180, 255, 0.8); }
+.timeline-item.msg-await-input .timeline-content { color: rgba(255, 220, 140, 0.85); }

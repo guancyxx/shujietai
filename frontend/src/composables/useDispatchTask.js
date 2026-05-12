@@ -557,6 +557,91 @@ const dispatchMessages = computed(() => {
         meta_json: { interrupted: true },
         _groupKey: 'interrupted',
       })
+    } else if (evt.event_type === 'progress') {
+      // Task progress event (finish reason, usage stats, etc.)
+      const finishReason = payload.finish_reason || ''
+      const usage = payload.usage || {}
+      const usageParts = []
+      if (usage.prompt_tokens != null) usageParts.push(`${usage.prompt_tokens} in`)
+      if (usage.completion_tokens != null) usageParts.push(`${usage.completion_tokens} out`)
+      const usageStr = usageParts.length ? ` (${usageParts.join(', ')})` : ''
+      const summary = finishReason ? `📊 完成: ${finishReason}${usageStr}` : `📊 进度更新${usageStr}`
+      messages.push({
+        id: `progress_${evt.id || evt.seq}`,
+        role: 'system',
+        content: summary,
+        content_type: 'text/plain',
+        created_at: evt.created_at,
+        meta_json: { progress: true, finish_reason: finishReason, usage },
+        _groupKey: 'progress',
+      })
+    } else if (evt.event_type === 'content_full') {
+      // Complete assistant message snapshot — show as compact system marker.
+      // The content itself was already streamed via content_delta chunks.
+      const preview = (payload.content || '').substring(0, 120)
+      messages.push({
+        id: `full_${evt.id || evt.seq}`,
+        role: 'system',
+        content: `✅ AI 回复已生成${preview ? ': ' + preview + (payload.content && payload.content.length > 120 ? '...' : '') : ''}`,
+        content_type: 'text/plain',
+        created_at: evt.created_at,
+        meta_json: { content_full: true, preview },
+        _groupKey: 'content_full',
+      })
+    } else if (evt.event_type === 'completed') {
+      messages.push({
+        id: `completed_${evt.id || evt.seq}`,
+        role: 'system',
+        content: '✅ 任务已完成',
+        content_type: 'text/plain',
+        created_at: evt.created_at,
+        meta_json: { completed: true },
+        _groupKey: 'completed',
+      })
+    } else if (evt.event_type === 'cancelled') {
+      messages.push({
+        id: `cancelled_${evt.id || evt.seq}`,
+        role: 'system',
+        content: '🚫 任务已取消',
+        content_type: 'text/plain',
+        created_at: evt.created_at,
+        meta_json: { cancelled: true },
+        _groupKey: 'cancelled',
+      })
+    } else if (evt.event_type === 'failed') {
+      const errorMsg = payload.error || payload.summary || '未知错误'
+      messages.push({
+        id: `failed_${evt.id || evt.seq}`,
+        role: 'system',
+        content: `❌ 任务失败: ${errorMsg}`,
+        content_type: 'text/plain',
+        created_at: evt.created_at,
+        meta_json: { failed: true, error: errorMsg },
+        _groupKey: 'failed',
+      })
+    } else if (evt.event_type === 'await_input') {
+      const prompt = payload.prompt || ''
+      messages.push({
+        id: `await_${evt.id || evt.seq}`,
+        role: 'system',
+        content: `⌛ AI 正在等待输入${prompt ? ': ' + prompt : ''}`,
+        content_type: 'text/plain',
+        created_at: evt.created_at,
+        meta_json: { await_input: true, prompt },
+        _groupKey: 'await_input',
+      })
+    } else if (evt.event_type === 'status') {
+      // Status transition events — show as compact status markers
+      const statusLabel = dispatchStatusLabelMap[payload.status || evt.status] || payload.status || evt.status || '状态变更'
+      messages.push({
+        id: `status_${evt.id || evt.seq}`,
+        role: 'system',
+        content: `📌 状态: ${statusLabel}`,
+        content_type: 'text/plain',
+        created_at: evt.created_at,
+        meta_json: { status_event: true, task_status: payload.status || evt.status },
+        _groupKey: 'status',
+      })
     }
   }
 
