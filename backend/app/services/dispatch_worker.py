@@ -85,7 +85,13 @@ class TaskWorker:
         self._svc = dispatch_service
         self._ws = ws_manager
         self._cancelled = False
+        self._interrupted = False
+        self._interrupt_msg = ""
         self._tool_calls_in_flight: dict[str, dict[str, Any]] = {}
+
+    def interrupt(self, user_message: str) -> None:
+        self._interrupted = True
+        self._interrupt_msg = user_message.strip()
 
     async def run(self) -> None:
         """Main entry point — called as an asyncio.Task."""
@@ -107,18 +113,46 @@ class TaskWorker:
             await self._execute_ai_call()
 
         except asyncio.CancelledError:
-            # User cancelled via API
-            cancelled_task = self._svc.cancel_task(task_id)
-            if cancelled_task is not None:
-                self._task = cancelled_task
-            await self._emit_event(
-                "cancelled",
-                {},
-                event_name="task.cancelled",
-                status="cancelled",
-            )
-            self._tool_calls_in_flight.clear()
-            logger.info("Dispatch task %s cancelled", task_id)
+            if self._interrupted:
+                # Interrupt (revise) — non-terminal: stop current run, append correction, restart
+                interrupted_task = self._svc.interrupt_task(task_id, self._interrupt_msg)
+                if interrupted_task is not None:
+                    self._task = interrupted_task
+                await self._emit_event(
+                    "interrupted",
+                    {"reason": "user_revise", "user_message": self._interrupt_msg},
+                    event_name="task.interrupted",
+                    status=self._task.status,
+                )
+                await self._emit_event(
+                    "content_delta",
+                    {"role": "user", "content": self._interrupt_msg},
+                    event_name="message.user.delta",
+                    status=self._task.status,
+                )
+                self._tool_calls_in_flight.clear()
+                self._interrupted = False
+                self._interrupt_msg = ""
+                # Assign a new run ID for the restarted conversation
+                refreshed = self._svc.start_new_run(task_id)
+                if refreshed is not None:
+                    self._task = refreshed
+                # Start a new run in the same dispatch conversation context
+                await self._execute_ai_call()
+                logger.info("Dispatch task %s interrupted and revised", task_id)
+            else:
+                # User cancelled via API
+                cancelled_task = self._svc.cancel_task(task_id)
+                if cancelled_task is not None:
+                    self._task = cancelled_task
+                await self._emit_event(
+                    "cancelled",
+                    {},
+                    event_name="task.cancelled",
+                    status="cancelled",
+                )
+                self._tool_calls_in_flight.clear()
+                logger.info("Dispatch task %s cancelled", task_id)
 
         except Exception as exc:
             error_msg = str(exc)[:500]
@@ -442,8 +476,8 @@ class DispatchWorkerPool:
     ) -> None:
         self._svc = dispatch_service
         self._ws = ws_manager
-        # task_id -> asyncio.Task
-        self._workers: dict[str, asyncio.Task] = {}
+        # task_id -> (asyncio.Task, TaskWorker)
+        self._workers: dict[str, tuple[asyncio.Task, TaskWorker]] = {}
 
     def start_task(self, task: DispatchTaskItem) -> None:
         """Start a background asyncio.Task for the given dispatch task."""
@@ -456,21 +490,34 @@ class DispatchWorkerPool:
 
         worker = TaskWorker(task=task, dispatch_service=self._svc, ws_manager=self._ws)
         atask = asyncio.create_task(worker.run(), name=f"dispatch-{task.id}")
-        self._workers[task.id] = atask
+        self._workers[task.id] = (atask, worker)
         atask.add_done_callback(lambda t, tid=task.id: self._workers.pop(tid, None))
 
     def cancel_task(self, task_id: str) -> bool:
         """Cancel the asyncio.Task for a dispatch task. Returns True if found."""
-        atask = self._workers.get(task_id)
-        if atask is None:
+        entry = self._workers.get(task_id)
+        if entry is None:
             return False
+        atask, _worker = entry
         atask.cancel()
+        return True
+
+    def interrupt_task(self, task_id: str, user_message: str) -> bool:
+        """Interrupt running worker and restart with user correction."""
+        entry = self._workers.get(task_id)
+        if entry is None:
+            return False
+        atask, worker = entry
+        if atask.done():
+            return False
+        worker.interrupt(user_message)
+        atask.cancel()  # CancelledError triggers interrupt path in run()
         return True
 
     def cancel_all(self) -> int:
         """Cancel all running asyncio.Tasks. Returns count of cancelled tasks."""
         count = 0
-        for task_id, atask in list(self._workers.items()):
+        for task_id, (atask, _worker) in list(self._workers.items()):
             atask.cancel()
             count += 1
         return count

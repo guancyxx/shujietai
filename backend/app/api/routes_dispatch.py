@@ -11,6 +11,7 @@ from app.schemas import (
     DispatchTaskItem,
     DispatchTaskListResponse,
     EmergencyStopResponse,
+    InterruptRequest,
 )
 from app.services.dispatch_service import DispatchService
 from app.services.dispatch_worker import DispatchWorkerPool
@@ -93,6 +94,26 @@ async def resume_dispatch_task(task_id: str, payload: DispatchResumeRequest) -> 
 
     pool.start_task(task)
     return task
+
+
+@router.post("/{task_id}/interrupt", response_model=DispatchTaskItem)
+async def interrupt_dispatch_task(task_id: str, payload: InterruptRequest) -> DispatchTaskItem:
+    svc = _get_dispatch_service()
+    pool = _get_worker_pool()
+
+    task = svc.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="dispatch_task_not_found")
+    if task.status not in ("queued", "running"):
+        raise HTTPException(status_code=409, detail="dispatch_task_not_interruptible")
+
+    ok = pool.interrupt_task(task_id, payload.user_message)
+    if not ok:
+        raise HTTPException(status_code=409, detail="dispatch_task_interrupt_failed")
+
+    # Return fresh task state
+    updated = svc.get_task(task_id)
+    return updated or task
 
 
 @router.post("/{task_id}/cancel", response_model=DispatchTaskItem)
