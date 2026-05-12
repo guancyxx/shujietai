@@ -1854,6 +1854,16 @@ details[open] .thinking-summary::before {
   max-width: 220px;
 }
 
+.kanban-cell .task-board-card-top {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.kanban-cell .task-board-card-actions {
+  justify-content: flex-start;
+  justify-self: stretch;
+  max-width: none;
+}
+
 .task-board-name-row {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);

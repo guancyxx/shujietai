@@ -542,7 +542,7 @@ const collapsedTaskNodes = ref(new Set())
 const collapsedKanbanStatuses = ref(new Set(['completed']))
 
 const KANBAN_ROW_LABEL_WIDTH = 180
-const KANBAN_EXPANDED_COLUMN_WIDTH = 190
+const KANBAN_EXPANDED_COLUMN_WIDTH = 280
 const KANBAN_COLLAPSED_COLUMN_WIDTH = 72
 
 const kanbanGridTemplate = computed(() => [
