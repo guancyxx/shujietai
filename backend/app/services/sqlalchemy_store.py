@@ -32,6 +32,9 @@ from app.services.github_project_service import GitHubProjectService
 from app.services.system_config_service import SystemConfigService
 
 
+REASON_REQUIRED_STATUSES = {"blocked", "cancelled"}
+
+
 class SqlAlchemySessionStore:
     def __init__(self, database_url: str) -> None:
         self._lock = Lock()
@@ -405,10 +408,19 @@ class SqlAlchemySessionStore:
             parent_task_id=UUID(row.parent_task_id) if row.parent_task_id else None,
             parent_task_name=parent.name if parent else None,
             status=row.status,
+            status_reason=(row.status_reason or "").strip(),
             priority=row.priority,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
+
+    def _normalize_task_status_reason(self, status: str, reason: str | None) -> str | None:
+        normalized_reason = (reason or "").strip()
+        if status in REASON_REQUIRED_STATUSES:
+            if not normalized_reason:
+                raise ValueError("task_status_reason_required")
+            return normalized_reason
+        return None
 
     def list_task_board_items(self, project_id: str | None = None, keyword: str | None = None) -> list[TaskBoardItem]:
         with self._session_factory() as db:
@@ -446,6 +458,7 @@ class SqlAlchemySessionStore:
                     upstream_task_id=str(payload.upstream_task_id) if payload.upstream_task_id is not None else None,
                     parent_task_id=str(payload.parent_task_id) if payload.parent_task_id is not None else None,
                     status=payload.status,
+                    status_reason=self._normalize_task_status_reason(payload.status, payload.status_reason),
                     priority=payload.priority,
                     created_at=now,
                     updated_at=now,
@@ -469,7 +482,17 @@ class SqlAlchemySessionStore:
                 if payload.ai_platform is not None:
                     entity.ai_platform = payload.ai_platform.strip() or "hermes"
                 if payload.status is not None:
+                    if (
+                        payload.status in REASON_REQUIRED_STATUSES
+                        and payload.status != entity.status
+                        and payload.status_reason is None
+                    ):
+                        raise ValueError("task_status_reason_required")
                     entity.status = payload.status
+                if payload.status_reason is not None or payload.status is not None:
+                    target_status = payload.status if payload.status is not None else entity.status
+                    target_reason = payload.status_reason if payload.status_reason is not None else entity.status_reason
+                    entity.status_reason = self._normalize_task_status_reason(target_status, target_reason)
                 if payload.priority is not None:
                     entity.priority = payload.priority
 

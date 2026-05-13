@@ -901,6 +901,7 @@ def create_task_board_item(payload: TaskBoardCreateRequest):
             "project_not_found",
             "upstream_task_not_found",
             "parent_task_not_found",
+            "task_status_reason_required",
         }:
             raise HTTPException(status_code=422, detail=detail) from exc
         raise
@@ -918,6 +919,7 @@ def update_task_board_item(task_id: str, payload: TaskBoardUpdateRequest):
             "parent_task_not_found",
             "upstream_task_cannot_be_self",
             "parent_task_cannot_be_self",
+            "task_status_reason_required",
         }:
             raise HTTPException(status_code=422, detail=detail) from exc
         raise

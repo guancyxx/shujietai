@@ -434,6 +434,19 @@ h2 {
   background: rgba(14, 165, 233, 0.22);
 }
 
+.status-task-reason-chip {
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde68a;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.74rem;
+  max-width: min(100%, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-skill-group {
   display: inline-flex;
   flex-wrap: wrap;

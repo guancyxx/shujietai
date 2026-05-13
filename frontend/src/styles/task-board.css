@@ -351,6 +351,16 @@
   word-break: break-word;
 }
 
+.task-board-status-reason {
+  color: #ffd8b4;
+  font-size: 12px;
+  line-height: 1.5;
+  border-left: 2px solid rgba(255, 184, 122, 0.45);
+  padding-left: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .task-board-meta-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

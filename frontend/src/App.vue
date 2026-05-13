@@ -313,6 +313,7 @@ const taskBoardCreateForm = ref({
   upstream_task_id: '',
   parent_task_id: '',
   status: 'draft',
+  status_reason: '',
   priority: 3,
 })
 const taskBoardEditForm = ref({
@@ -323,6 +324,7 @@ const taskBoardEditForm = ref({
   upstream_task_id: '',
   parent_task_id: '',
   status: 'draft',
+  status_reason: '',
   priority: 3,
 })
 const isProjectCreateModalOpen = ref(false)
@@ -1221,6 +1223,7 @@ function resetTaskBoardCreateForm() {
     upstream_task_id: '',
     parent_task_id: '',
     status: 'draft',
+    status_reason: '',
     priority: 3,
   }
 }
@@ -1383,6 +1386,7 @@ function openTaskBoardEditModal(item) {
     upstream_task_id: item.upstream_task_id || '',
     parent_task_id: item.parent_task_id || '',
     status: item.status || 'draft',
+    status_reason: item.status_reason || '',
     priority: item.priority ?? 3,
   }
   isTaskBoardEditModalOpen.value = true
@@ -1409,12 +1413,47 @@ function taskBoardDetailField(value) {
   return normalized || '-'
 }
 
+function requiresTaskStatusReason(status) {
+  return status === 'blocked' || status === 'cancelled'
+}
+
+function normalizeTaskStatusReason(status, reason) {
+  if (!requiresTaskStatusReason(status)) {
+    return ''
+  }
+  return String(reason || '').trim()
+}
+
+function getTaskStatusReasonPreview(item, maxLength = 96) {
+  const reason = String(item?.status_reason || '').trim()
+  if (!reason) {
+    return ''
+  }
+  if (reason.length <= maxLength) {
+    return reason
+  }
+  return `${reason.slice(0, maxLength).trimEnd()}...`
+}
+
+function ensureTaskStatusReasonBeforeSave(formState) {
+  const normalizedReason = normalizeTaskStatusReason(formState.status, formState.status_reason)
+  if (requiresTaskStatusReason(formState.status) && !normalizedReason) {
+    throw new Error('阻塞或取消任务时必须填写原因')
+  }
+  return normalizedReason
+}
+
 function buildTaskBoardUpdatePayload(item, patch) {
+  const nextStatus = patch.status ?? item.status ?? 'draft'
+  const nextReasonSource = Object.prototype.hasOwnProperty.call(patch, 'status_reason')
+    ? patch.status_reason
+    : (item.status_reason || '')
   return {
     name: item.name,
     description: item.description || '',
     ai_platform: item.ai_platform || 'hermes',
-    status: item.status || 'draft',
+    status: nextStatus,
+    status_reason: normalizeTaskStatusReason(nextStatus, nextReasonSource),
     priority: item.priority ?? 3,
     project_id: item.project_id || null,
     upstream_task_id: item.upstream_task_id || null,
@@ -1425,6 +1464,16 @@ function buildTaskBoardUpdatePayload(item, patch) {
 
 async function updateTaskBoardItemQuick(item, patch) {
   if (!item?.id || quickUpdatingTaskBoardItemId.value === item.id) {
+    return
+  }
+  const targetStatus = patch.status ?? item.status ?? 'draft'
+  if (
+    requiresTaskStatusReason(targetStatus)
+    && targetStatus !== (item.status ?? 'draft')
+    && !Object.prototype.hasOwnProperty.call(patch, 'status_reason')
+  ) {
+    openTaskBoardEditModal({ ...item, status: targetStatus, status_reason: '' })
+    errorMessage.value = `请先填写${taskBoardStatusLabelMap[targetStatus] || targetStatus}原因`
     return
   }
   quickUpdatingTaskBoardItemId.value = item.id
@@ -1472,11 +1521,13 @@ async function updateTaskBoardPriority(item, event) {
 }
 
 function buildTaskBoardPayload(formState) {
+  const normalizedReason = ensureTaskStatusReasonBeforeSave(formState)
   return {
     name: formState.name.trim(),
     description: formState.description.trim(),
     ai_platform: formState.ai_platform.trim() || 'hermes',
     status: formState.status,
+    status_reason: normalizedReason,
     priority: formState.priority,
     project_id: formState.project_id || null,
     upstream_task_id: formState.upstream_task_id || null,
@@ -2083,6 +2134,9 @@ onUnmounted(() => {
               <button v-if="currentLinkedTask" type="button" class="status-task-chip" @click="openLinkedTaskFromStatus">
                 {{ currentLinkedTask.project_name || '未关联项目' }} · {{ currentLinkedTask.name }} · {{ taskBoardStatusLabelMap[currentLinkedTask.status] || currentLinkedTask.status }} · {{ KANBAN_PRIORITY_LABELS[getTaskPriority(currentLinkedTask)] }}
               </button>
+              <span v-if="requiresTaskStatusReason(currentLinkedTask?.status) && currentLinkedTask?.status_reason" class="status-task-reason-chip">
+                原因：{{ getTaskStatusReasonPreview(currentLinkedTask, 120) }}
+              </span>
               <span v-if="currentLoadedSkills.length" class="status-skill-group">
                 <button v-for="skill in currentLoadedSkills" :key="skill.name + skill.file_path" type="button" class="status-skill-chip" @click="openSkillDetail(skill)">{{ skill.name }}</button>
               </span>
@@ -2244,6 +2298,9 @@ onUnmounted(() => {
                           </div>
                         </div>
                         <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
+                        <div v-if="requiresTaskStatusReason(item.status) && item.status_reason" class="task-board-status-reason">
+                          原因：{{ getTaskStatusReasonPreview(item) }}
+                        </div>
                         <div class="task-board-meta task-board-meta-inline">
                           <span class="task-board-meta-label">{{ item.ai_platform }}</span>
                           <span class="task-board-meta-label muted">{{ formatSessionTime(item.updated_at) }}</span>
@@ -2266,10 +2323,16 @@ onUnmounted(() => {
                                 <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(child)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(child)">编辑</button></div>
                               </div>
                               <div class="task-board-desc task-board-desc-compact">{{ child.description || '暂无描述' }}</div>
+                              <div v-if="requiresTaskStatusReason(child.status) && child.status_reason" class="task-board-status-reason">
+                                原因：{{ getTaskStatusReasonPreview(child) }}
+                              </div>
                               <div v-if="child.children.length && !collapsedTaskNodes.has(child.id)" class="task-tree-children">
                                 <div v-for="grandchild in child.children" :key="grandchild.id" class="task-board-card task-board-card-child task-board-card-grandchild" :class="{ 'task-board-card-highlighted': highlightedTaskBoardItemId === grandchild.id }">
                                   <div class="task-board-card-top"><div class="task-board-title-wrap"><div class="task-board-name-row"><span class="task-tree-spacer"></span><span class="task-board-name">{{ grandchild.name }}</span></div><div class="task-board-badges"><span class="priority-badge" :class="`priority-P${getTaskPriority(grandchild) - 1}`">{{ KANBAN_PRIORITY_LABELS[getTaskPriority(grandchild)] }}</span></div></div><div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(grandchild)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(grandchild)">编辑</button></div></div>
                                   <div class="task-board-desc task-board-desc-compact">{{ grandchild.description || '暂无描述' }}</div>
+                                  <div v-if="requiresTaskStatusReason(grandchild.status) && grandchild.status_reason" class="task-board-status-reason">
+                                    原因：{{ getTaskStatusReasonPreview(grandchild) }}
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -2850,6 +2913,10 @@ onUnmounted(() => {
               <option v-for="opt in taskBoardStatusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </label>
+          <label v-if="requiresTaskStatusReason(taskBoardCreateForm.status)" class="create-field">
+            <span class="create-field-label">状态原因</span>
+            <textarea v-model="taskBoardCreateForm.status_reason" class="create-initial-message" :disabled="creatingTaskBoardItem" :placeholder="`请输入${taskBoardStatusLabelMap[taskBoardCreateForm.status] || taskBoardCreateForm.status}原因`"></textarea>
+          </label>
           <label class="create-field-row">
             <span class="create-field-label">优先级</span>
             <select v-model.number="taskBoardCreateForm.priority" class="picker-provider-select" :disabled="creatingTaskBoardItem">
@@ -2885,6 +2952,10 @@ onUnmounted(() => {
             <h4>任务描述</h4>
             <div v-if="taskBoardDetailItem.description" class="task-detail-markdown" v-html="renderMarkdown(taskBoardDetailItem.description)"></div>
             <div v-else class="muted">暂无描述</div>
+          </section>
+          <section v-if="requiresTaskStatusReason(taskBoardDetailItem.status) && taskBoardDetailItem.status_reason" class="task-detail-section">
+            <h4>状态原因</h4>
+            <div class="task-detail-reason">{{ taskBoardDetailItem.status_reason }}</div>
           </section>
           <section class="task-detail-grid">
             <div><span>项目</span><strong>{{ taskBoardDetailField(taskBoardDetailItem.project_name) }}</strong></div>
@@ -2955,6 +3026,10 @@ onUnmounted(() => {
             <select v-model="taskBoardEditForm.status" class="picker-provider-select" :disabled="updatingTaskBoardItem">
               <option v-for="opt in taskBoardStatusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
+          </label>
+          <label v-if="requiresTaskStatusReason(taskBoardEditForm.status)" class="create-field">
+            <span class="create-field-label">状态原因</span>
+            <textarea v-model="taskBoardEditForm.status_reason" class="create-initial-message" :disabled="updatingTaskBoardItem" :placeholder="`请输入${taskBoardStatusLabelMap[taskBoardEditForm.status] || taskBoardEditForm.status}原因`"></textarea>
           </label>
           <label class="create-field-row">
             <span class="create-field-label">优先级</span>

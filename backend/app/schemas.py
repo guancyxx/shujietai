@@ -147,6 +147,7 @@ class TaskBoardCreateRequest(BaseModel):
     parent_task_id: UUID | None = None
     upstream_task_id: UUID | None = None
     status: TaskBoardStatus = "draft"
+    status_reason: str = Field(default="", max_length=2000)
     priority: int = Field(default=3, ge=1, le=4)
 
     @field_validator("ai_platform")
@@ -163,6 +164,7 @@ class TaskBoardUpdateRequest(BaseModel):
     parent_task_id: UUID | None = None
     upstream_task_id: UUID | None = None
     status: TaskBoardStatus | None = None
+    status_reason: str | None = Field(default=None, max_length=2000)
     priority: int | None = Field(default=None, ge=1, le=4)
 
     @field_validator("ai_platform")
@@ -185,6 +187,7 @@ class TaskBoardItem(BaseModel):
     parent_task_id: UUID | None = None
     parent_task_name: str | None = None
     status: TaskBoardStatus
+    status_reason: str = ""
     priority: int = 3
     created_at: datetime
     updated_at: datetime
