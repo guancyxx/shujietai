@@ -23,6 +23,7 @@ from app.schemas import (
 )
 from app.services.hermes_runtime_catalog import build_runtime_state
 from app.services.github_project_service import GitHubProjectService
+from app.services.title_generator import generate_session_title
 
 
 REASON_REQUIRED_STATUSES = {"blocked", "cancelled"}
@@ -61,6 +62,19 @@ class SessionStore:
             self._refresh_counts(session_id)
             return session_id, False
 
+    def _resolve_session_title(self, payload: IngestEventRequest) -> str:
+        """Resolve the session title, preferring auto-generation from user input."""
+        if payload.title:
+            return payload.title
+
+        # Auto-generate from user message content
+        if payload.message is not None and payload.message.role == "user":
+            generated = generate_session_title(payload.message.content)
+            if generated:
+                return generated
+
+        return f"Session {payload.external_session_id}"
+
     def _get_or_create_session(self, payload: IngestEventRequest) -> str:
         key = (payload.platform, payload.external_session_id)
         existing = self._session_id_by_external.get(key)
@@ -74,7 +88,7 @@ class SessionStore:
             id=session_id,
             platform=payload.platform,
             external_session_id=payload.external_session_id,
-            title=payload.title or f"Session {payload.external_session_id}",
+            title=self._resolve_session_title(payload),
             status="active",
             started_at=created_at,
             ended_at=None,

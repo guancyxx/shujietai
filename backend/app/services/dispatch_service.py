@@ -21,6 +21,7 @@ from app.schemas import (
     DispatchTaskItem,
     DispatchTaskStatus,
 )
+from app.services.title_generator import generate_session_title
 
 logger = logging.getLogger(__name__)
 
@@ -540,11 +541,12 @@ class DispatchService:
             ).scalar_one_or_none()
 
             if session_entity is None:
+                title = generate_session_title(content) if role == "user" else None
                 session_entity = SessionEntity(
                     id=f"sess_{uuid4().hex[:12]}",
                     platform=platform,
                     external_session_id=external_session_id,
-                    title=f"Session {external_session_id}",
+                    title=title or f"Session {external_session_id}",
                     status="active",
                     started_at=now,
                     ended_at=None,
