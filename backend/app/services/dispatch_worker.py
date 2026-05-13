@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from app.connectors.registry import get_connector, list_platforms
-from app.schemas import DispatchTaskItem
+from app.schemas import DispatchTaskItem, normalize_platform
 from app.services.dispatch_service import DispatchService
 from app.services.ws_manager import WsManager
 
@@ -210,7 +210,7 @@ class TaskWorker:
         if not external_id:
             return
 
-        platform = (self._task.ai_platform or "hermes").strip() or "hermes"
+        platform = normalize_platform(self._task.ai_platform)
         try:
             self._svc.persist_message_to_session(
                 platform=platform,

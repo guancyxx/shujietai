@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from app.schemas import IngestEventRequest
+from app.schemas import IngestEventRequest, normalize_platform
 from app.services.dispatch_service import DispatchService
 from app.services.dispatch_worker import DispatchWorkerPool
 
@@ -61,7 +61,7 @@ def _ingest_session_for_task(
     try:
         ingest_fn(
             IngestEventRequest(
-                platform=task_board_item.ai_platform or "hermes",
+                platform=normalize_platform(task_board_item.ai_platform),
                 event_id=f"evt_init_{dispatch_task_item.id}",
                 event_type="session_started",
                 external_session_id=external_session_id,
@@ -76,7 +76,7 @@ def _ingest_session_for_task(
         )
         ingest_fn(
             IngestEventRequest(
-                platform=task_board_item.ai_platform or "hermes",
+                platform=normalize_platform(task_board_item.ai_platform),
                 event_id=f"evt_progress_{dispatch_task_item.id}",
                 event_type="dispatch_created",
                 external_session_id=external_session_id,

@@ -15,6 +15,7 @@ from app.schemas import (
     EventItem,
     IngestEventRequest,
     MessageItem,
+    normalize_platform,
     ProjectCreateRequest,
     ProjectItem,
     ProjectUpdateRequest,
@@ -453,7 +454,7 @@ class SqlAlchemySessionStore:
                     id=item_id,
                     name=payload.name.strip(),
                     description=payload.description.strip(),
-                    ai_platform=(payload.ai_platform or "hermes").strip() or "hermes",
+                    ai_platform=normalize_platform(payload.ai_platform),
                     project_id=str(payload.project_id) if payload.project_id is not None else None,
                     upstream_task_id=str(payload.upstream_task_id) if payload.upstream_task_id is not None else None,
                     parent_task_id=str(payload.parent_task_id) if payload.parent_task_id is not None else None,
@@ -480,7 +481,7 @@ class SqlAlchemySessionStore:
                 if payload.description is not None:
                     entity.description = payload.description.strip()
                 if payload.ai_platform is not None:
-                    entity.ai_platform = payload.ai_platform.strip() or "hermes"
+                    entity.ai_platform = normalize_platform(payload.ai_platform)
                 if payload.status is not None:
                     if (
                         payload.status in REASON_REQUIRED_STATUSES

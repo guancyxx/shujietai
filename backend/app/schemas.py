@@ -27,6 +27,20 @@ def validate_ai_platform(value: str | None) -> str | None:
     return value
 
 
+INVALID_PLATFORM_VALUES = frozenset({"none", ""})
+
+
+def normalize_platform(value: str) -> str:
+    """Normalize ai_platform: map none/empty to hermes, strip whitespace.
+
+    Idempotent — calling on "hermes" returns "hermes".
+    This is for internal code paths (store, service, worker) —
+    API validation (validate_ai_platform) prevents bad values at the boundary.
+    """
+    v = (value or "").strip().lower()
+    return "hermes" if v in INVALID_PLATFORM_VALUES else v or "hermes"
+
+
 class IngestMessagePayload(BaseModel):
     role: MessageRole
     content: str

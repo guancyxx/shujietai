@@ -20,6 +20,7 @@ from app.schemas import (
     DispatchResumeRequest,
     DispatchTaskItem,
     DispatchTaskStatus,
+    normalize_platform,
 )
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,7 @@ class DispatchService:
         return self.create_task(
             DispatchCreateRequest(
                 task_board_item_id=task_board_item_id,
-                ai_platform=item.ai_platform or "hermes",
+                ai_platform=normalize_platform(item.ai_platform),
                 initial_prompt=prompt,
                 external_session_id=external_session_id,
             )
