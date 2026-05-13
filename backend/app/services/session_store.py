@@ -9,6 +9,7 @@ from app.schemas import (
     EventItem,
     IngestEventRequest,
     MessageItem,
+    normalize_platform,
     ProjectCreateRequest,
     ProjectItem,
     ProjectUpdateRequest,
@@ -339,7 +340,7 @@ class SessionStore:
                 id=uuid4(),
                 name=payload.name.strip(),
                 description=payload.description.strip(),
-                ai_platform=(payload.ai_platform or "hermes").strip() or "hermes",
+                ai_platform=normalize_platform(payload.ai_platform),
                 project_id=payload.project_id,
                 project_name=project_item.name if project_item else None,
                 upstream_task_id=payload.upstream_task_id,
@@ -362,7 +363,7 @@ class SessionStore:
 
             next_name = payload.name.strip() if payload.name is not None else current.name
             next_description = payload.description.strip() if payload.description is not None else current.description
-            next_ai_platform = payload.ai_platform.strip() if payload.ai_platform is not None else current.ai_platform
+            next_ai_platform = normalize_platform(payload.ai_platform) if payload.ai_platform is not None else normalize_platform(current.ai_platform)
             next_status = payload.status if payload.status is not None else current.status
             if (
                 payload.status is not None
@@ -416,7 +417,7 @@ class SessionStore:
                 update={
                     "name": next_name,
                     "description": next_description,
-                    "ai_platform": next_ai_platform or "hermes",
+                    "ai_platform": normalize_platform(next_ai_platform),
                     "project_id": next_project_id,
                     "project_name": next_project_name,
                     "upstream_task_id": next_upstream_task_id,

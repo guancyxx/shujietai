@@ -304,6 +304,11 @@ async function cancelFromHistory(task) {
 }
 
 const { connected: wsConnected, connect: wsConnect, subscribe, on } = useWebSocket()
+
+function safePlatform(value) {
+  const v = (value || '').trim().toLowerCase()
+  return (v === 'none' || v === '') ? 'hermes' : (v || 'hermes')
+}
 const editingTaskBoardItemId = ref('')
 const taskBoardCreateForm = ref({
   name: '',
@@ -1242,7 +1247,7 @@ async function startConversationFromTask(task) {
   try {
     const projectContext = resolveTaskProjectContext(task)
     const systemPrompt = buildTaskSystemPrompt(task, projectContext)
-    const platform = task.ai_platform || 'hermes'
+    const platform = safePlatform(task.ai_platform)
     const promptMessage = buildTaskStartMessage(task, projectContext)
 
     // Use dispatch orchestration layer instead of direct SSE (ADR-0004)
@@ -1309,7 +1314,7 @@ function buildTaskSystemPrompt(task, projectContext = null) {
   lines.push(`Task: ${task.name}`)
   if (task.description) lines.push(`Description: ${task.description}`)
   lines.push(`Status: ${taskBoardStatusLabelMap[task.status] || task.status}`)
-  lines.push(`AI Platform: ${task.ai_platform || 'hermes'}`)
+  lines.push(`AI Platform: ${safePlatform(task.ai_platform)}`)
 
   const context = projectContext || resolveTaskProjectContext(task)
   if (context?.name || context?.repositoryName || context?.repositoryUrl) {
@@ -1381,7 +1386,7 @@ function openTaskBoardEditModal(item) {
   taskBoardEditForm.value = {
     name: item.name,
     description: item.description || '',
-    ai_platform: item.ai_platform || 'hermes',
+    ai_platform: safePlatform(item.ai_platform),
     project_id: item.project_id || '',
     upstream_task_id: item.upstream_task_id || '',
     parent_task_id: item.parent_task_id || '',
@@ -1451,7 +1456,7 @@ function buildTaskBoardUpdatePayload(item, patch) {
   return {
     name: item.name,
     description: item.description || '',
-    ai_platform: item.ai_platform || 'hermes',
+    ai_platform: safePlatform(item.ai_platform),
     status: nextStatus,
     status_reason: normalizeTaskStatusReason(nextStatus, nextReasonSource),
     priority: item.priority ?? 3,
@@ -1525,7 +1530,7 @@ function buildTaskBoardPayload(formState) {
   return {
     name: formState.name.trim(),
     description: formState.description.trim(),
-    ai_platform: formState.ai_platform.trim() || 'hermes',
+    ai_platform: safePlatform(formState.ai_platform),
     status: formState.status,
     status_reason: normalizedReason,
     priority: formState.priority,
@@ -2879,7 +2884,6 @@ onUnmounted(() => {
             <span class="create-field-label">AI 平台</span>
             <select v-model="taskBoardCreateForm.ai_platform" class="picker-provider-select" :disabled="creatingTaskBoardItem">
               <option value="hermes">Hermes Agent</option>
-              <option value="none">无</option>
             </select>
           </label>
 
@@ -2996,7 +3000,6 @@ onUnmounted(() => {
             <span class="create-field-label">AI 平台</span>
             <select v-model="taskBoardEditForm.ai_platform" class="picker-provider-select" :disabled="updatingTaskBoardItem">
               <option value="hermes">Hermes Agent</option>
-              <option value="none">无</option>
             </select>
           </label>
 
