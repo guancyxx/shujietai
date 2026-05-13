@@ -204,6 +204,60 @@ class DispatchService:
             ).scalar_one_or_none()
             return _entity_to_item(row) if row is not None else None
 
+    def get_latest_task_for_task_board_item(self, task_board_item_id: str) -> DispatchTaskItem | None:
+        """Return the most recent dispatch task for a given task-board item, regardless of status."""
+        if not task_board_item_id.strip():
+            return None
+        with self._session_factory() as db:
+            row = db.execute(
+                select(DispatchTaskEntity)
+                .where(DispatchTaskEntity.task_board_item_id == task_board_item_id)
+                .order_by(DispatchTaskEntity.created_at.desc())
+            ).scalar_one_or_none()
+            return _entity_to_item(row) if row is not None else None
+
+    def resolve_work_session(self, task_board_item_id: str) -> dict:
+        """Resolve the canonical work session for a task-board item.
+
+        Returns a dict with:
+          - recommended_action: 'resume' | 'view_history' | 'create_new'
+          - active_dispatch_task: the running/awaiting_input/paused dispatch or None
+          - latest_dispatch_task: the most recent dispatch (any status) or None
+          - task_board_item_id: the resolved item id (passthrough)
+        """
+        if not task_board_item_id.strip():
+            return {
+                "task_board_item_id": task_board_item_id,
+                "recommended_action": "create_new",
+                "active_dispatch_task": None,
+                "latest_dispatch_task": None,
+            }
+
+        active = self.get_active_task_for_task_board_item(task_board_item_id)
+        if active is not None:
+            return {
+                "task_board_item_id": task_board_item_id,
+                "recommended_action": "resume",
+                "active_dispatch_task": active,
+                "latest_dispatch_task": active,
+            }
+
+        latest = self.get_latest_task_for_task_board_item(task_board_item_id)
+        if latest is not None:
+            return {
+                "task_board_item_id": task_board_item_id,
+                "recommended_action": "view_history",
+                "active_dispatch_task": None,
+                "latest_dispatch_task": latest,
+            }
+
+        return {
+            "task_board_item_id": task_board_item_id,
+            "recommended_action": "create_new",
+            "active_dispatch_task": None,
+            "latest_dispatch_task": None,
+        }
+
     def list_pending_execution_task_board_items(self, limit: int = 20) -> list[TaskBoardEntity]:
         with self._session_factory() as db:
             rows = db.execute(
