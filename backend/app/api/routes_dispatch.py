@@ -12,6 +12,7 @@ from app.schemas import (
     DispatchTaskListResponse,
     EmergencyStopResponse,
     InterruptRequest,
+    WorkSessionResponse,
 )
 from app.services.dispatch_service import DispatchService
 from app.services.dispatch_worker import DispatchWorkerPool
@@ -157,3 +158,23 @@ def emergency_stop(request: Request) -> EmergencyStopResponse:
     cancelled_count = svc.emergency_stop()
     logger.warning(f"[AUDIT] emergency-stop completed, cancelled {cancelled_count} tasks")
     return EmergencyStopResponse(cancelled_count=cancelled_count)
+
+
+@router.get("/task-board/{task_board_item_id}/work-session", response_model=WorkSessionResponse)
+def resolve_task_board_work_session(task_board_item_id: str) -> WorkSessionResponse:
+    """Resolve the canonical work session for a task-board item.
+
+    Returns the recommended action (resume/view_history/create_new) together
+    with the active and latest dispatch tasks for this task-board item.
+    Use this before creating a new dispatch to avoid duplicate execution.
+    """
+    svc = _get_dispatch_service()
+    result = svc.resolve_work_session(task_board_item_id)
+    active = result.get("active_dispatch_task")
+    latest = result.get("latest_dispatch_task")
+    return WorkSessionResponse(
+        task_board_item_id=result["task_board_item_id"],
+        recommended_action=result["recommended_action"],
+        active_dispatch_task=active if isinstance(active, DispatchTaskItem) else None,
+        latest_dispatch_task=latest if isinstance(latest, DispatchTaskItem) else None,
+    )

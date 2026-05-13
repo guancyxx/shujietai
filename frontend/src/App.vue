@@ -1140,11 +1140,48 @@ function getDispatchTaskIdFromExternalSessionId(externalSessionId) {
   return normalized.slice(dispatchPrefix.length)
 }
 
+/** Resolve the canonical dispatch task for a work-session context.
+ *  Handles both dispatch_ and task_board_ prefixed external session ids.
+ *  For dispatch_ prefix, extracts the task id directly (synchronous).
+ *  For task_board_ prefix, calls the work-session resolver endpoint (async).
+ *  Returns the dispatch task object or null.
+ */
+async function resolveDispatchTaskFromExternalSessionId(externalSessionId) {
+  const normalized = String(externalSessionId || '').trim()
+
+  // Legacy path: dispatch_<taskId> — extract id directly
+  const dispatchPrefix = 'dispatch_'
+  if (normalized.startsWith(dispatchPrefix)) {
+    const taskId = normalized.slice(dispatchPrefix.length)
+    if (taskId) {
+      return await fetchJson(`${apiBase}/api/v1/dispatch/${taskId}`)
+    }
+    return null
+  }
+
+  // Stable path: task_board_<itemId> — call work-session resolver
+  const taskBoardPrefix = 'task_board_'
+  if (normalized.startsWith(taskBoardPrefix)) {
+    const taskBoardItemId = normalized.slice(taskBoardPrefix.length)
+    if (!taskBoardItemId) return null
+    try {
+      const resolved = await fetchJson(`${apiBase}/api/v1/dispatch/task-board/${encodeURIComponent(taskBoardItemId)}/work-session`)
+      // Prefer active dispatch, fall back to latest
+      return resolved.active_dispatch_task || resolved.latest_dispatch_task || null
+    } catch {
+      return null
+    }
+  }
+
+  return null
+}
+
 // Re-attach to the dispatch task associated with the selected session.
 // This runs on initial page refresh and on later session switches.
+// Supports both dispatch_ and task_board_ prefixed external session ids.
 async function restoreActiveDispatchTask() {
-  const taskId = getDispatchTaskIdFromExternalSessionId(selectedExternalSessionId.value)
-  if (!taskId) {
+  const normalized = String(selectedExternalSessionId.value || '').trim()
+  if (!normalized) {
     clearActiveTask()
     return
   }
@@ -1152,7 +1189,17 @@ async function restoreActiveDispatchTask() {
   clearActiveTask()
 
   try {
-    const task = await fetchJson(`${apiBase}/api/v1/dispatch/${taskId}`)
+    // Try legacy dispatch_ prefix first (synchronous extraction)
+    const legacyTaskId = getDispatchTaskIdFromExternalSessionId(normalized)
+    let task = null
+
+    if (legacyTaskId) {
+      task = await fetchJson(`${apiBase}/api/v1/dispatch/${legacyTaskId}`)
+    } else {
+      // For task_board_ or other prefixes, use async resolver
+      task = await resolveDispatchTaskFromExternalSessionId(normalized)
+    }
+
     if (!task) {
       return
     }
@@ -1317,15 +1364,61 @@ function openTaskBoardByProject(project) {
   activePage.value = 'task-board'
 }
 
+/**
+ * Navigate to an existing dispatch task's session for a task-board item.
+ * Used by both resume (active dispatch) and view_history (terminal dispatch) paths.
+ */
+async function selectExistingDispatchSession(task, dispatchTask) {
+  const externalSessionId = dispatchTask.external_session_id || dispatchTask.id
+  await loadSessions()
+  const matchedSession = sessions.value.find(
+    (s) => s.platform === safePlatform(task.ai_platform) && s.external_session_id === externalSessionId,
+  )
+  if (matchedSession) {
+    selectedSessionId.value = matchedSession.id
+    selectedExternalSessionId.value = matchedSession.external_session_id
+  } else {
+    selectedExternalSessionId.value = externalSessionId
+  }
+  activePage.value = 'chat'
+  await restoreActiveDispatchTask()
+  scrollToBottom(true)
+}
+
 async function startConversationFromTask(task) {
   if (startingConversationFromTask.value) return
   startingConversationFromTask.value = true
   errorMessage.value = ''
   try {
+    // Step 1: Resolve work session before creating a new dispatch.
+    // Avoids duplicate execution: if an active dispatch exists, resume it instead.
+    let resolved = null
+    try {
+      resolved = await fetchJson(`${apiBase}/api/v1/dispatch/task-board/${encodeURIComponent(task.id)}/work-session`)
+    } catch {
+      // Resolver unreachable — fall through to create_new path
+    }
+
+    const action = resolved?.recommended_action || 'create_new'
+
+    if (action === 'resume' && resolved?.active_dispatch_task) {
+      await selectExistingDispatchSession(task, resolved.active_dispatch_task)
+      return
+    }
+
+    if (action === 'view_history' && resolved?.latest_dispatch_task) {
+      await selectExistingDispatchSession(task, resolved.latest_dispatch_task)
+      return
+    }
+
+    // create_new path: no prior dispatch exists, or resolver failed
     const projectContext = resolveTaskProjectContext(task)
     const systemPrompt = buildTaskSystemPrompt(task, projectContext)
     const platform = safePlatform(task.ai_platform)
     const promptMessage = buildTaskStartMessage(task, projectContext)
+
+    // Use stable task_board_<id> as external session id for task-board conversations
+    const externalSessionId = `task_board_${task.id}`
 
     // Use dispatch orchestration layer instead of direct SSE (ADR-0004)
     const dispatchTask = await createDispatchTask({
@@ -1336,10 +1429,10 @@ async function startConversationFromTask(task) {
       skills: [...selectedSkills.value],
       mcpServers: [...selectedMcpServers.value],
       taskBoardItemId: task.id,
+      externalSessionId,
     })
 
     // Create a session entry so the conversation appears in the list
-    const externalSessionId = dispatchTask.external_session_id || dispatchTask.id
     await postJson(`${apiBase}/api/v1/events/ingest`, {
       platform,
       event_id: `evt_init_${dispatchTask.id}`,

@@ -419,3 +419,10 @@ class DispatchEventListResponse(BaseModel):
 
 class EmergencyStopResponse(BaseModel):
     cancelled_count: int
+
+
+class WorkSessionResponse(BaseModel):
+    task_board_item_id: str
+    recommended_action: str  # 'resume' | 'view_history' | 'create_new'
+    active_dispatch_task: DispatchTaskItem | None = None
+    latest_dispatch_task: DispatchTaskItem | None = None
