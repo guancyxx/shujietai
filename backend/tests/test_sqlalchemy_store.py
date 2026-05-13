@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from app.schemas import IngestEventRequest, ProjectCreateRequest, TaskBoardCreateRequest, TaskBoardUpdateRequest
+from app.services.sqlalchemy_store import SqlAlchemySessionStore
 
 
 def test_sqlalchemy_store_ingest_and_query_roundtrip() -> None:
@@ -187,11 +188,13 @@ def test_sqlalchemy_store_task_board_crud_and_filters() -> None:
         str(second.id),
         TaskBoardUpdateRequest(
             status="blocked",
+            status_reason="Awaiting repository access",
             description="B updated",
         ),
     )
     assert updated is not None
     assert updated.status == "blocked"
+    assert updated.status_reason == "Awaiting repository access"
     assert updated.description == "B updated"
 
     deleted = store.delete_task_board_item(str(first.id))
@@ -202,3 +205,31 @@ def test_sqlalchemy_store_task_board_crud_and_filters() -> None:
     assert remaining[0].id == second.id
     assert remaining[0].upstream_task_id is None
     assert remaining[0].parent_task_id is None
+
+
+def test_task_board_status_reason_validation_and_clear() -> None:
+    store = SqlAlchemySessionStore("sqlite+pysqlite:///:memory:")
+
+    created = store.create_task_board_item(
+        TaskBoardCreateRequest(
+            name="Blocked Task",
+            description="Waiting",
+            status="blocked",
+            status_reason="Waiting for external approval",
+        )
+    )
+    assert created.status_reason == "Waiting for external approval"
+
+    try:
+        store.update_task_board_item(str(created.id), TaskBoardUpdateRequest(status="cancelled"))
+    except ValueError as exc:
+        assert str(exc) == "task_status_reason_required"
+    else:
+        raise AssertionError("expected task_status_reason_required")
+
+    resumed = store.update_task_board_item(
+        str(created.id),
+        TaskBoardUpdateRequest(status="in_progress"),
+    )
+    assert resumed is not None
+    assert resumed.status_reason == ""
