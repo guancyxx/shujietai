@@ -144,6 +144,7 @@ class TaskBoardUpdateRequest(BaseModel):
     upstream_task_id: UUID | None = None
     status: TaskBoardStatus | None = None
     priority: int | None = Field(default=None, ge=1, le=4)
+    archived: bool | None = None
 
 
 class TaskBoardItem(BaseModel):
@@ -161,6 +162,8 @@ class TaskBoardItem(BaseModel):
     parent_task_name: str | None = None
     status: TaskBoardStatus
     priority: int = 3
+    archived: bool = False
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

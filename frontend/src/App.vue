@@ -155,6 +155,64 @@ async function switchToDispatchHistory() {
   await refreshDispatchHistory()
 }
 
+// Task archive state
+const archivedTaskItems = ref([])
+const archiveProjectFilter = ref('')
+const archiveKeyword = ref('')
+const archiveStatusFilter = ref('')
+const archiveLoading = ref(false)
+const archivingTaskId = ref('')
+const unarchivingTaskId = ref('')
+const archiveDetailItem = ref(null)
+const isArchiveDetailOpen = ref(false)
+
+async function switchToTaskArchive() {
+  activePage.value = 'task-archive'
+  await loadArchivedTasks()
+}
+
+async function loadArchivedTasks() {
+  archiveLoading.value = true
+  try {
+    const params = new URLSearchParams()
+    if (archiveProjectFilter.value) params.set('project_id', archiveProjectFilter.value)
+    if (archiveKeyword.value) params.set('keyword', archiveKeyword.value)
+    if (archiveStatusFilter.value) params.set('status', archiveStatusFilter.value)
+    const qs = params.toString()
+    const url = `${apiBase}/api/v1/task-board/archived${qs ? '?' + qs : ''}`
+    archivedTaskItems.value = (await fetchJson(url)).items
+  } catch (err) {
+    console.error('Failed to load archived tasks', err)
+  } finally {
+    archiveLoading.value = false
+  }
+}
+
+async function archiveTaskBoardItem(item) {
+  archivingTaskId.value = item.id
+  try {
+    await patchJson(`${apiBase}/api/v1/task-board/${item.id}/archive`, {})
+    await loadTaskBoardItems()
+  } catch (err) {
+    console.error('Failed to archive task', err)
+  } finally {
+    archivingTaskId.value = ''
+  }
+}
+
+async function unarchiveTaskBoardItem(item) {
+  unarchivingTaskId.value = item.id
+  try {
+    await patchJson(`${apiBase}/api/v1/task-board/${item.id}/unarchive`, {})
+    await loadArchivedTasks()
+    await loadTaskBoardItems()
+  } catch (err) {
+    console.error('Failed to unarchive task', err)
+  } finally {
+    unarchivingTaskId.value = ''
+  }
+}
+
 // Skills catalog state
 const skillsCatalog = ref(null)
 const skillsCatalogLoading = ref(false)
@@ -1911,6 +1969,10 @@ onUnmounted(() => {
             <span class="top-nav-btn-icon" aria-hidden="true">🗂️</span>
             <span class="top-nav-btn-label">任务看板</span>
           </button>
+          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'task-archive' }" @click="switchToTaskArchive">
+            <span class="top-nav-btn-icon" aria-hidden="true">📦</span>
+            <span class="top-nav-btn-label">归档任务</span>
+          </button>
           <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'model-config' }" @click="activePage = 'model-config'">
             <span class="top-nav-btn-icon" aria-hidden="true">🤖</span>
             <span class="top-nav-btn-label">模型配置</span>
@@ -2240,6 +2302,7 @@ onUnmounted(() => {
                             <button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(item)">详情</button>
                             <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
                             <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
+                            <button v-if="item.status === 'completed' || item.status === 'cancelled'" type="button" class="project-btn project-btn-archive" :disabled="archivingTaskId === item.id" @click.stop="archiveTaskBoardItem(item)">{{ archivingTaskId === item.id ? '...' : '归档' }}</button>
                             <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click.stop="deleteTaskBoardItem(item)">{{ deletingTaskBoardItemId === item.id ? '...' : '删除' }}</button>
                           </div>
                         </div>
@@ -2263,7 +2326,7 @@ onUnmounted(() => {
                                     <span v-if="child.children.length" class="task-child-count">{{ child.children.length }} 子任务</span>
                                   </div>
                                 </div>
-                                <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(child)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(child)">编辑</button></div>
+                                <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(child)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(child)">编辑</button><button v-if="child.status === 'completed' || child.status === 'cancelled'" type="button" class="project-btn project-btn-archive" :disabled="archivingTaskId === child.id" @click.stop="archiveTaskBoardItem(child)">{{ archivingTaskId === child.id ? '...' : '归档' }}</button></div>
                               </div>
                               <div class="task-board-desc task-board-desc-compact">{{ child.description || '暂无描述' }}</div>
                               <div v-if="child.children.length && !collapsedTaskNodes.has(child.id)" class="task-tree-children">
@@ -2286,6 +2349,89 @@ onUnmounted(() => {
           </div>
         </article>
       </section>
+
+      <section v-else-if="activePage === 'task-archive'" class="main-grid task-board-grid">
+        <article class="panel task-board-panel">
+          <div class="task-board-panel-header">
+            <h2>归档任务</h2>
+            <div class="task-board-actions">
+              <select v-model="archiveProjectFilter" class="task-board-filter-select" @change="loadArchivedTasks">
+                <option value="">全部项目</option>
+                <option v-for="opt in taskBoardProjectOptions.filter(o => o.value)" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+              <select v-model="archiveStatusFilter" class="task-board-filter-select" @change="loadArchivedTasks">
+                <option value="">全部状态</option>
+                <option value="completed">已完成</option>
+                <option value="cancelled">取消</option>
+              </select>
+              <input v-model="archiveKeyword" class="project-search task-board-search" placeholder="搜索归档任务" @input="loadArchivedTasks" />
+            </div>
+          </div>
+
+          <div v-if="archiveLoading" class="project-empty">加载中...</div>
+          <div v-else-if="archivedTaskItems.length === 0" class="project-empty">暂无归档任务。</div>
+          <div v-else class="archive-list scrollbar-themed">
+            <div v-for="item in archivedTaskItems" :key="item.id" class="task-board-card">
+              <div class="task-board-card-top">
+                <div class="task-board-title-wrap">
+                  <div class="task-board-name-row">
+                    <span class="task-board-name">{{ item.name }}</span>
+                  </div>
+                  <div class="task-board-badges">
+                    <span class="priority-badge" :class="`priority-P${getTaskPriority(item) - 1}`">{{ KANBAN_PRIORITY_LABELS[getTaskPriority(item)] }}</span>
+                    <span class="task-status-tag" :class="`task-status-${item.status}`">{{ taskBoardStatusLabelMap[item.status] }}</span>
+                    <span v-if="item.project_name" class="task-board-meta-label muted">{{ item.project_name }}</span>
+                  </div>
+                </div>
+                <div class="task-board-card-actions">
+                  <button type="button" class="project-btn" @click.stop="archiveDetailItem = item; isArchiveDetailOpen = true">详情</button>
+                  <button type="button" class="project-btn project-btn-primary" :disabled="unarchivingTaskId === item.id" @click.stop="unarchiveTaskBoardItem(item)">{{ unarchivingTaskId === item.id ? '...' : '恢复' }}</button>
+                </div>
+              </div>
+              <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
+              <div class="task-board-meta task-board-meta-inline">
+                <span class="task-board-meta-label">{{ item.ai_platform }}</span>
+                <span class="task-board-meta-label muted">归档于 {{ formatSessionTime(item.archived_at) }}</span>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- Archive detail modal -->
+      <div v-if="isArchiveDetailOpen" class="modal-overlay" @click.self="isArchiveDetailOpen = false; archiveDetailItem = null">
+        <div class="modal task-detail-modal">
+          <div class="modal-header">
+            <h3 class="modal-title">任务详情</h3>
+            <button type="button" class="modal-close-btn" @click="isArchiveDetailOpen = false; archiveDetailItem = null">✕</button>
+          </div>
+          <div v-if="archiveDetailItem" class="modal-body">
+            <section class="task-detail-section">
+              <h4 class="task-detail-heading">{{ archiveDetailItem.name }}</h4>
+              <div class="task-detail-meta-bar">
+                <span class="priority-badge" :class="`priority-P${getTaskPriority(archiveDetailItem) - 1}`">{{ KANBAN_PRIORITY_LABELS[getTaskPriority(archiveDetailItem)] }}</span>
+                <span class="task-status-tag" :class="`task-status-${archiveDetailItem.status}`">{{ taskBoardStatusLabelMap[archiveDetailItem.status] }}</span>
+                <span class="muted">{{ archiveDetailItem.ai_platform }}</span>
+                <span v-if="archiveDetailItem.project_name" class="muted"> | {{ archiveDetailItem.project_name }}</span>
+              </div>
+            </section>
+            <section class="task-detail-section">
+              <h4>描述</h4>
+              <p class="task-detail-desc">{{ archiveDetailItem.description || '暂无描述' }}</p>
+            </section>
+            <section class="task-detail-section">
+              <h4>时间</h4>
+              <p class="muted">创建：{{ formatSessionTime(archiveDetailItem.created_at) }}</p>
+              <p class="muted">更新：{{ formatSessionTime(archiveDetailItem.updated_at) }}</p>
+              <p class="muted">归档：{{ formatSessionTime(archiveDetailItem.archived_at) }}</p>
+            </section>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="project-btn project-btn-primary" @click="unarchiveTaskBoardItem(archiveDetailItem); isArchiveDetailOpen = false; archiveDetailItem = null">恢复至看板</button>
+            <button type="button" class="project-btn" @click="isArchiveDetailOpen = false; archiveDetailItem = null">关闭</button>
+          </div>
+        </div>
+      </div>
 
       <section v-else-if="activePage === 'model-config'" class="main-grid config-grid">
         <article class="panel state-panel config-panel">

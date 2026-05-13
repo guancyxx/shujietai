@@ -934,6 +934,45 @@ def delete_task_board_item(task_id: str):
     return {"deleted": 1, "task_id": task_id}
 
 
+@app.patch("/api/v1/task-board/{task_id}/archive")
+def archive_task_board_item(task_id: str):
+    """Archive a completed or cancelled task (hide from active board)."""
+    try:
+        item = store.update_task_board_item(task_id, TaskBoardUpdateRequest(archived=True))
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "can_only_archive_completed_or_cancelled":
+            raise HTTPException(status_code=422, detail=detail) from exc
+        raise
+    if item is None:
+        raise HTTPException(status_code=404, detail="task_board_item_not_found")
+    return item
+
+
+@app.patch("/api/v1/task-board/{task_id}/unarchive")
+def unarchive_task_board_item(task_id: str):
+    """Restore an archived task back to the active board."""
+    item = store.update_task_board_item(task_id, TaskBoardUpdateRequest(archived=False))
+    if item is None:
+        raise HTTPException(status_code=404, detail="task_board_item_not_found")
+    return item
+
+
+@app.get("/api/v1/task-board/archived", response_model=TaskBoardListResponse)
+def list_archived_task_board_items(
+    project_id: str | None = Query(default=None),
+    keyword: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+) -> TaskBoardListResponse:
+    return TaskBoardListResponse(
+        items=store.list_archived_task_board_items(
+            project_id=project_id,
+            keyword=keyword,
+            status=status,
+        )
+    )
+
+
 @app.get("/api/v1/sessions")
 def list_sessions():
     return store.list_sessions()
