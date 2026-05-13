@@ -26,43 +26,79 @@
 
     <!-- Side detail panel -->
     <transition name="sg-panel">
-      <div class="sg-detail" v-if="selected">
+      <div class="sg-detail scrollbar-themed" v-if="selected">
         <div class="sg-detail-header">
-          <span class="sg-detail-label">{{ selected.label || selected.name }}</span>
-          <button class="picker-btn" @click="selected = null">✕</button>
+          <span class="sg-detail-label">{{ detailTitle }}</span>
+          <button class="picker-btn" @click="closeDetail">✕</button>
         </div>
-        <div class="sg-detail-meta" v-if="selected.skill_count !== undefined">
-          <span class="sg-badge">{{ selected.skill_count }} 个技能</span>
-          <span
-            v-for="tag in (selected.tags || []).slice(0, 8)"
-            :key="tag"
-            class="sg-tag"
-          >{{ tag }}</span>
-        </div>
-        <div class="sg-detail-meta" v-else>
-          <span
-            v-for="tag in (selected.tags || [])"
-            :key="tag"
-            class="sg-tag"
-          >{{ tag }}</span>
-        </div>
-        <ul class="sg-skill-list" v-if="selected.skills">
-          <li
-            v-for="s in selected.skills"
-            :key="s.name"
-            class="sg-skill-item"
-            @click="drillInto(selected.id || selected.label)"
-          >
-            <span class="sg-skill-name">{{ s.name }}</span>
-          </li>
-        </ul>
+
+        <template v-if="isCategoryNode(selected)">
+          <div class="sg-detail-meta">
+            <span class="sg-badge">{{ selected.skill_count }} 个技能</span>
+            <span
+              v-for="tag in (selected.tags || []).slice(0, 8)"
+              :key="tag"
+              class="sg-tag"
+            >{{ tag }}</span>
+          </div>
+          <p class="sg-detail-empty">分类节点暂无独立详情。点击列表项或双击分类节点进入技能图谱。</p>
+          <ul class="sg-skill-list" v-if="selected.skills">
+            <li
+              v-for="s in selected.skills"
+              :key="s.name"
+              class="sg-skill-item"
+              @click="drillInto(selected.id || selected.label)"
+            >
+              <span class="sg-skill-name">{{ s.name }}</span>
+            </li>
+          </ul>
+        </template>
+
+        <template v-else-if="isSkillNode(selected)">
+          <div v-if="detailLoading" class="sg-detail-state">正在加载 skill 详情...</div>
+          <div v-else-if="detailError" class="sg-detail-error">{{ detailError }}</div>
+          <template v-else-if="skillDetail">
+            <p class="sg-detail-description" v-if="skillDetail.description">{{ skillDetail.description }}</p>
+            <div class="sg-detail-meta">
+              <span class="sg-badge">{{ skillDetail.category || 'general' }}</span>
+              <span class="sg-badge" v-if="skillDetail.skill_type && skillDetail.skill_type !== 'unknown'">{{ skillDetail.skill_type }}</span>
+              <span
+                v-for="tag in (skillDetail.tags || [])"
+                :key="tag"
+                class="sg-tag"
+              >{{ tag }}</span>
+            </div>
+            <dl class="sg-detail-fields">
+              <div>
+                <dt>名称</dt>
+                <dd>{{ skillDetail.display_name || skillDetail.name }}</dd>
+              </div>
+              <div>
+                <dt>路径</dt>
+                <dd>{{ skillDetail.path || '未提供' }}</dd>
+              </div>
+              <div v-if="skillDetail.related_skills?.length">
+                <dt>关联 skills</dt>
+                <dd>{{ skillDetail.related_skills.join(', ') }}</dd>
+              </div>
+            </dl>
+            <div class="sg-detail-summary" v-if="skillDetail.content_summary">
+              <div class="sg-detail-section-title">主要内容摘要</div>
+              <p>{{ skillDetail.content_summary }}</p>
+            </div>
+            <p class="sg-detail-empty" v-if="!skillDetail.description && !skillDetail.content_summary">暂无可展示详情内容。</p>
+          </template>
+          <p v-else class="sg-detail-empty">暂无 skill 详情。</p>
+        </template>
+
+        <p v-else class="sg-detail-empty">该节点类型暂无详情。</p>
       </div>
     </transition>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue'
 import * as d3 from 'd3'
 
 const props = defineProps({
@@ -75,12 +111,21 @@ const svgEl = ref(null)
 const canvasWrap = ref(null)
 const tooltip = ref(null)
 const selected = ref(null)
+const skillDetail = ref(null)
+const detailLoading = ref(false)
+const detailError = ref('')
 const modes = [
   { id: 'category', label: '分类图谱' },
 ]
 
+const detailTitle = computed(() => {
+  if (skillDetail.value?.display_name) return skillDetail.value.display_name
+  return selected.value?.label || selected.value?.name || selected.value?.id || '节点详情'
+})
+
 let graphData = null       // full response from /api/v1/skills/graph
 let simulation = null
+let detailRequestId = 0
 
 // ────────────────────────────────────────────────────────────
 // Data
@@ -94,18 +139,65 @@ async function reload() {
 // ────────────────────────────────────────────────────────────
 // Mode switching
 // ────────────────────────────────────────────────────────────
+function closeDetail() {
+  detailRequestId += 1
+  selected.value = null
+  skillDetail.value = null
+  detailLoading.value = false
+  detailError.value = ''
+}
+
 function setMode(m, category) {
   mode.value = m
   if (category) expandedCategory.value = category
-  selected.value = null
+  closeDetail()
   draw()
 }
 
 function drillInto(categoryId) {
   expandedCategory.value = categoryId
   mode.value = 'skill'
-  selected.value = null
+  closeDetail()
   draw()
+}
+
+function isCategoryNode(node) {
+  return node?.skill_count !== undefined
+}
+
+function isSkillNode(node) {
+  return Boolean(node?.id || node?.name) && !isCategoryNode(node)
+}
+
+async function selectNode(node) {
+  selected.value = node
+  skillDetail.value = null
+  detailError.value = ''
+  detailLoading.value = false
+
+  if (!isSkillNode(node)) return
+
+  const skillName = node.id || node.name
+  if (!skillName) {
+    detailError.value = '未知节点类型，无法加载详情。'
+    return
+  }
+
+  const currentRequestId = detailRequestId + 1
+  detailRequestId = currentRequestId
+  detailLoading.value = true
+  try {
+    const res = await fetch(`${props.apiBase}/api/v1/skills/${encodeURIComponent(skillName)}/detail`)
+    if (!res.ok) throw new Error(`加载失败 (${res.status})`)
+    const detail = await res.json()
+    if (currentRequestId === detailRequestId) skillDetail.value = detail
+  } catch (error) {
+    if (currentRequestId === detailRequestId) {
+      detailError.value = error instanceof Error ? error.message : '加载失败'
+    }
+  } finally {
+    if (currentRequestId === detailRequestId) detailLoading.value = false
+  }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -192,9 +284,7 @@ function drawCategory() {
           d.fx = null; d.fy = null
         })
     )
-    .on('click', (_, d) => {
-      selected.value = d
-    })
+    .on('click', (_, d) => { selectNode(d) })
     .on('dblclick', (_, d) => {
       drillInto(d.id)
     })
@@ -296,7 +386,7 @@ function drawSkill(categoryId) {
           d.fx = null; d.fy = null
         })
     )
-    .on('click', (_, d) => { selected.value = d })
+    .on('click', (_, d) => { selectNode(d) })
     .on('mouseover', (event, d) => showTip(event, `<b>${shortName(d)}</b><br/><small>${(d.tags||[]).join(', ')}</small>`))
     .on('mousemove', moveTip)
     .on('mouseout', hideTip)
@@ -455,6 +545,52 @@ onMounted(async () => {
   gap: 5px;
   margin-bottom: 10px;
 }
+.sg-detail-description,
+.sg-detail-empty,
+.sg-detail-state,
+.sg-detail-error,
+.sg-detail-summary p {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(171,178,191,0.82);
+}
+
+.sg-detail-error {
+  color: #ff8a8a;
+}
+
+.sg-detail-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.sg-detail-fields div {
+  display: grid;
+  gap: 3px;
+}
+
+.sg-detail-fields dt,
+.sg-detail-section-title {
+  font-size: 11px;
+  color: rgba(111,186,255,0.72);
+}
+
+.sg-detail-fields dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(229,232,239,0.9);
+  word-break: break-all;
+}
+
+.sg-detail-summary {
+  border-top: 1px solid rgba(111,186,255,0.12);
+  padding-top: 10px;
+}
+
 
 .sg-badge {
   background: rgba(111,186,255,0.15);
