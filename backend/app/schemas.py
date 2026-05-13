@@ -4,12 +4,41 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 TaskLane = Literal["todo", "doing", "done"]
 TaskBoardStatus = Literal["draft", "pending_execution", "in_progress", "blocked", "completed", "cancelled"]
 MessageRole = Literal["user", "assistant", "system", "tool"]
+
+# Valid ai_platform values — must be kept in sync with connector registry
+VALID_AI_PLATFORMS = ("hermes",)
+
+
+def validate_ai_platform(value: str | None) -> str | None:
+    """Validate ai_platform value against registered connectors."""
+    if value is None:
+        return None
+    if value not in VALID_AI_PLATFORMS:
+        raise ValueError(
+            f"invalid ai_platform: {value!r}. "
+            f"Available platforms: {', '.join(VALID_AI_PLATFORMS)}"
+        )
+    return value
+
+
+INVALID_PLATFORM_VALUES = frozenset({"none", ""})
+
+
+def normalize_platform(value: str) -> str:
+    """Normalize ai_platform: map none/empty to hermes, strip whitespace.
+
+    Idempotent — calling on "hermes" returns "hermes".
+    This is for internal code paths (store, service, worker) —
+    API validation (validate_ai_platform) prevents bad values at the boundary.
+    """
+    v = (value or "").strip().lower()
+    return "hermes" if v in INVALID_PLATFORM_VALUES else v or "hermes"
 
 
 class IngestMessagePayload(BaseModel):
@@ -132,7 +161,13 @@ class TaskBoardCreateRequest(BaseModel):
     parent_task_id: UUID | None = None
     upstream_task_id: UUID | None = None
     status: TaskBoardStatus = "draft"
+    status_reason: str = Field(default="", max_length=2000)
     priority: int = Field(default=3, ge=1, le=4)
+
+    @field_validator("ai_platform")
+    @classmethod
+    def check_ai_platform(cls, v: str) -> str:
+        return validate_ai_platform(v)
 
 
 class TaskBoardUpdateRequest(BaseModel):
@@ -143,8 +178,14 @@ class TaskBoardUpdateRequest(BaseModel):
     parent_task_id: UUID | None = None
     upstream_task_id: UUID | None = None
     status: TaskBoardStatus | None = None
+    status_reason: str | None = Field(default=None, max_length=2000)
     priority: int | None = Field(default=None, ge=1, le=4)
     archived: bool | None = None
+
+    @field_validator("ai_platform")
+    @classmethod
+    def check_ai_platform(cls, v: str | None) -> str | None:
+        return validate_ai_platform(v)
 
 
 class TaskBoardItem(BaseModel):
@@ -161,6 +202,7 @@ class TaskBoardItem(BaseModel):
     parent_task_id: UUID | None = None
     parent_task_name: str | None = None
     status: TaskBoardStatus
+    status_reason: str = ""
     priority: int = 3
     archived: bool = False
     archived_at: datetime | None = None
@@ -321,6 +363,11 @@ class DispatchCreateRequest(BaseModel):
     model: str | None = Field(default=None, max_length=128)
     skills: list[str] | None = None
     mcp_servers: list[str] | None = None
+
+    @field_validator("ai_platform")
+    @classmethod
+    def check_ai_platform(cls, v: str) -> str:
+        return validate_ai_platform(v)
 
 
 class InterruptRequest(BaseModel):

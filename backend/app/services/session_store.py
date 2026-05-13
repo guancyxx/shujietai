@@ -9,6 +9,7 @@ from app.schemas import (
     EventItem,
     IngestEventRequest,
     MessageItem,
+    normalize_platform,
     ProjectCreateRequest,
     ProjectItem,
     ProjectUpdateRequest,
@@ -23,6 +24,10 @@ from app.schemas import (
 )
 from app.services.hermes_runtime_catalog import build_runtime_state
 from app.services.github_project_service import GitHubProjectService
+from app.services.title_generator import generate_session_title
+
+
+REASON_REQUIRED_STATUSES = {"blocked", "cancelled"}
 
 
 class SessionStore:
@@ -58,6 +63,19 @@ class SessionStore:
             self._refresh_counts(session_id)
             return session_id, False
 
+    def _resolve_session_title(self, payload: IngestEventRequest) -> str:
+        """Resolve the session title, preferring auto-generation from user input."""
+        if payload.title:
+            return payload.title
+
+        # Auto-generate from user message content
+        if payload.message is not None and payload.message.role == "user":
+            generated = generate_session_title(payload.message.content)
+            if generated:
+                return generated
+
+        return f"Session {payload.external_session_id}"
+
     def _get_or_create_session(self, payload: IngestEventRequest) -> str:
         key = (payload.platform, payload.external_session_id)
         existing = self._session_id_by_external.get(key)
@@ -71,7 +89,7 @@ class SessionStore:
             id=session_id,
             platform=payload.platform,
             external_session_id=payload.external_session_id,
-            title=payload.title or f"Session {payload.external_session_id}",
+            title=self._resolve_session_title(payload),
             status="active",
             started_at=created_at,
             ended_at=None,
@@ -327,11 +345,16 @@ class SessionStore:
                     raise ValueError("parent_task_not_found")
 
             now = self._now()
+            normalized_reason = (payload.status_reason or '').strip()
+            if payload.status in REASON_REQUIRED_STATUSES and not normalized_reason:
+                raise ValueError('task_status_reason_required')
+            if payload.status not in REASON_REQUIRED_STATUSES:
+                normalized_reason = ''
             created = TaskBoardItem(
                 id=uuid4(),
                 name=payload.name.strip(),
                 description=payload.description.strip(),
-                ai_platform=(payload.ai_platform or "hermes").strip() or "hermes",
+                ai_platform=normalize_platform(payload.ai_platform),
                 project_id=payload.project_id,
                 project_name=project_item.name if project_item else None,
                 upstream_task_id=payload.upstream_task_id,
@@ -339,6 +362,7 @@ class SessionStore:
                 parent_task_id=payload.parent_task_id,
                 parent_task_name=parent_item.name if parent_item else None,
                 status=payload.status,
+                status_reason=normalized_reason,
                 created_at=now,
                 updated_at=now,
             )
@@ -353,8 +377,21 @@ class SessionStore:
 
             next_name = payload.name.strip() if payload.name is not None else current.name
             next_description = payload.description.strip() if payload.description is not None else current.description
-            next_ai_platform = payload.ai_platform.strip() if payload.ai_platform is not None else current.ai_platform
+            next_ai_platform = normalize_platform(payload.ai_platform) if payload.ai_platform is not None else normalize_platform(current.ai_platform)
             next_status = payload.status if payload.status is not None else current.status
+            if (
+                payload.status is not None
+                and payload.status in REASON_REQUIRED_STATUSES
+                and payload.status != current.status
+                and payload.status_reason is None
+            ):
+                raise ValueError('task_status_reason_required')
+            next_status_reason_source = payload.status_reason if payload.status_reason is not None else current.status_reason
+            next_status_reason = (next_status_reason_source or '').strip()
+            if next_status in REASON_REQUIRED_STATUSES and not next_status_reason:
+                raise ValueError('task_status_reason_required')
+            if next_status not in REASON_REQUIRED_STATUSES:
+                next_status_reason = ''
 
             next_project_id = current.project_id
             if "project_id" in payload.model_fields_set:
@@ -394,7 +431,7 @@ class SessionStore:
                 update={
                     "name": next_name,
                     "description": next_description,
-                    "ai_platform": next_ai_platform or "hermes",
+                    "ai_platform": normalize_platform(next_ai_platform),
                     "project_id": next_project_id,
                     "project_name": next_project_name,
                     "upstream_task_id": next_upstream_task_id,
@@ -402,6 +439,7 @@ class SessionStore:
                     "parent_task_id": next_parent_task_id,
                     "parent_task_name": next_parent_task_name,
                     "status": next_status,
+                    "status_reason": next_status_reason,
                     "updated_at": self._now(),
                 }
             )

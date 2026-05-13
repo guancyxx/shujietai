@@ -15,6 +15,7 @@ from app.schemas import (
     EventItem,
     IngestEventRequest,
     MessageItem,
+    normalize_platform,
     ProjectCreateRequest,
     ProjectItem,
     ProjectUpdateRequest,
@@ -30,6 +31,10 @@ from app.schemas import (
 from app.services.hermes_runtime_catalog import build_runtime_state
 from app.services.github_project_service import GitHubProjectService
 from app.services.system_config_service import SystemConfigService
+from app.services.title_generator import generate_session_title
+
+
+REASON_REQUIRED_STATUSES = {"blocked", "cancelled"}
 
 
 class SqlAlchemySessionStore:
@@ -119,6 +124,19 @@ class SqlAlchemySessionStore:
                 self._refresh_counts(db, session_entity.id)
                 return session_entity.id, False
 
+    def _resolve_session_title(self, payload: IngestEventRequest) -> str:
+        """Resolve the session title, preferring auto-generation from user input."""
+        if payload.title:
+            return payload.title
+
+        # Auto-generate from user message content
+        if payload.message is not None and payload.message.role == "user":
+            generated = generate_session_title(payload.message.content)
+            if generated:
+                return generated
+
+        return f"Session {payload.external_session_id}"
+
     def _get_or_create_session(self, db: Session, payload: IngestEventRequest) -> SessionEntity:
         existing = db.execute(
             select(SessionEntity).where(
@@ -133,7 +151,7 @@ class SqlAlchemySessionStore:
             id=f"sess_{uuid4().hex[:12]}",
             platform=payload.platform,
             external_session_id=payload.external_session_id,
-            title=payload.title or f"Session {payload.external_session_id}",
+            title=self._resolve_session_title(payload),
             status="active",
             started_at=self.now(),
             ended_at=None,
@@ -405,12 +423,21 @@ class SqlAlchemySessionStore:
             parent_task_id=UUID(row.parent_task_id) if row.parent_task_id else None,
             parent_task_name=parent.name if parent else None,
             status=row.status,
+            status_reason=(row.status_reason or "").strip(),
             priority=row.priority,
             archived=bool(row.archived),
             archived_at=row.archived_at,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
+
+    def _normalize_task_status_reason(self, status: str, reason: str | None) -> str | None:
+        normalized_reason = (reason or "").strip()
+        if status in REASON_REQUIRED_STATUSES:
+            if not normalized_reason:
+                raise ValueError("task_status_reason_required")
+            return normalized_reason
+        return None
 
     def list_task_board_items(self, project_id: str | None = None, keyword: str | None = None) -> list[TaskBoardItem]:
         with self._session_factory() as db:
@@ -464,11 +491,12 @@ class SqlAlchemySessionStore:
                     id=item_id,
                     name=payload.name.strip(),
                     description=payload.description.strip(),
-                    ai_platform=(payload.ai_platform or "hermes").strip() or "hermes",
+                    ai_platform=normalize_platform(payload.ai_platform),
                     project_id=str(payload.project_id) if payload.project_id is not None else None,
                     upstream_task_id=str(payload.upstream_task_id) if payload.upstream_task_id is not None else None,
                     parent_task_id=str(payload.parent_task_id) if payload.parent_task_id is not None else None,
                     status=payload.status,
+                    status_reason=self._normalize_task_status_reason(payload.status, payload.status_reason),
                     priority=payload.priority,
                     created_at=now,
                     updated_at=now,
@@ -490,9 +518,19 @@ class SqlAlchemySessionStore:
                 if payload.description is not None:
                     entity.description = payload.description.strip()
                 if payload.ai_platform is not None:
-                    entity.ai_platform = payload.ai_platform.strip() or "hermes"
+                    entity.ai_platform = normalize_platform(payload.ai_platform)
                 if payload.status is not None:
+                    if (
+                        payload.status in REASON_REQUIRED_STATUSES
+                        and payload.status != entity.status
+                        and payload.status_reason is None
+                    ):
+                        raise ValueError("task_status_reason_required")
                     entity.status = payload.status
+                if payload.status_reason is not None or payload.status is not None:
+                    target_status = payload.status if payload.status is not None else entity.status
+                    target_reason = payload.status_reason if payload.status_reason is not None else entity.status_reason
+                    entity.status_reason = self._normalize_task_status_reason(target_status, target_reason)
                 if payload.priority is not None:
                     entity.priority = payload.priority
                 if payload.archived is not None:

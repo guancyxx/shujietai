@@ -229,12 +229,14 @@ def test_task_board_crud_with_filters(monkeypatch) -> None:
         f"/api/v1/task-board/{second_payload['id']}",
         json={
             "status": "blocked",
+            "status_reason": "Waiting for upstream API decision",
             "description": "B blocked",
         },
     )
     assert update_response.status_code == 200
     updated = update_response.json()
     assert updated["status"] == "blocked"
+    assert updated["status_reason"] == "Waiting for upstream API decision"
     assert updated["description"] == "B blocked"
 
     delete_response = client.delete(f"/api/v1/task-board/{first_payload['id']}")
@@ -263,7 +265,53 @@ def test_task_board_create_rejects_missing_project() -> None:
     assert response.json()["detail"] == "project_not_found"
 
 
-def test_task_board_update_rejects_self_dependency(monkeypatch) -> None:
+
+
+def test_task_board_update_rejects_blocked_without_reason(monkeypatch) -> None:
+    _mock_github_project_flow(monkeypatch)
+    task_response = client.post(
+        "/api/v1/task-board",
+        json={
+            "name": "Task Need Reason",
+            "description": "desc",
+            "status": "draft",
+        },
+    )
+    assert task_response.status_code == 200
+    task_id = task_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/v1/task-board/{task_id}",
+        json={
+            "status": "blocked",
+        },
+    )
+    assert update_response.status_code == 422
+    assert update_response.json()["detail"] == "task_status_reason_required"
+
+
+def test_task_board_update_clears_reason_when_status_returns_to_active(monkeypatch) -> None:
+    _mock_github_project_flow(monkeypatch)
+    task_response = client.post(
+        "/api/v1/task-board",
+        json={
+            "name": "Task Clear Reason",
+            "description": "desc",
+            "status": "blocked",
+            "status_reason": "Waiting for user input",
+        },
+    )
+    assert task_response.status_code == 200
+    task_id = task_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/v1/task-board/{task_id}",
+        json={
+            "status": "in_progress",
+        },
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["status_reason"] == ""
     _mock_github_project_flow(monkeypatch)
     project_response = client.post(
         "/api/v1/projects",

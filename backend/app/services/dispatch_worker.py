@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from app.connectors.registry import get_connector, list_platforms
-from app.schemas import DispatchTaskItem
+from app.schemas import DispatchTaskItem, normalize_platform
 from app.services.dispatch_service import DispatchService
 from app.services.ws_manager import WsManager
 
@@ -210,7 +210,7 @@ class TaskWorker:
         if not external_id:
             return
 
-        platform = (self._task.ai_platform or "hermes").strip() or "hermes"
+        platform = normalize_platform(self._task.ai_platform)
         try:
             self._svc.persist_message_to_session(
                 platform=platform,
@@ -344,7 +344,7 @@ class TaskWorker:
                 )
 
             elif chunk_type == "tool_start":
-                # Emitted by HermesRunsConnector when a tool invocation begins.
+                # Emitted by the Hermes connector when a tool invocation begins.
                 tool_name = str(chunk.get("tool") or chunk.get("tool_name") or chunk.get("function_name") or "tool")
                 tool_call_id = str(chunk.get("tool_call_id") or chunk.get("id") or f"run_tool_{tool_name}_{id(chunk)}")
                 payload = _normalize_tool_payload(chunk, tool_call_id=tool_call_id)

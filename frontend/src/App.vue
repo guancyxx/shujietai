@@ -362,6 +362,11 @@ async function cancelFromHistory(task) {
 }
 
 const { connected: wsConnected, connect: wsConnect, subscribe, on } = useWebSocket()
+
+function safePlatform(value) {
+  const v = (value || '').trim().toLowerCase()
+  return (v === 'none' || v === '') ? 'hermes' : (v || 'hermes')
+}
 const editingTaskBoardItemId = ref('')
 const taskBoardCreateForm = ref({
   name: '',
@@ -371,6 +376,7 @@ const taskBoardCreateForm = ref({
   upstream_task_id: '',
   parent_task_id: '',
   status: 'draft',
+  status_reason: '',
   priority: 3,
 })
 const taskBoardEditForm = ref({
@@ -381,6 +387,7 @@ const taskBoardEditForm = ref({
   upstream_task_id: '',
   parent_task_id: '',
   status: 'draft',
+  status_reason: '',
   priority: 3,
 })
 const isProjectCreateModalOpen = ref(false)
@@ -463,23 +470,43 @@ const currentLinkedTaskId = computed(() => {
 
 const currentLinkedTask = computed(() => findTaskBoardItemById(currentLinkedTaskId.value))
 
+// Extract skill chips from both dispatch tool events and session events.
+// Dispatch events are the live source; session events provide fallback for
+// historical conversations without an active dispatch task.
+function extractSkillChip(payload, seen) {
+  const functionName = payload.function_name || payload.tool_name || ''
+  const skillName = payload.skill_name || (functionName === 'skill_view' ? extractSkillNameFromToolPayload(payload) : '')
+  if (!skillName || seen.has(skillName)) return null
+  seen.add(skillName)
+  return {
+    name: skillName,
+    file_path: payload.skill_file_path || '',
+    skill_type: 'builtin',
+    category: 'loaded',
+    description: payload.skill_file_path ? `已读取 ${payload.skill_file_path}` : '本轮会话已加载',
+  }
+}
+
 const currentLoadedSkills = computed(() => {
   const seen = new Set()
   const items = []
+
+  // Primary source: live dispatch tool events (normalized by hermes_connector)
   for (const evt of dispatchTaskEvents.value) {
-    const payload = evt.payload || {}
-    const functionName = payload.function_name || payload.tool_name || ''
-    const skillName = payload.skill_name || (functionName === 'skill_view' ? extractSkillNameFromToolPayload(payload) : '')
-    if (!skillName || seen.has(skillName)) continue
-    seen.add(skillName)
-    items.push({
-      name: skillName,
-      file_path: payload.skill_file_path || '',
-      skill_type: 'builtin',
-      category: 'loaded',
-      description: payload.skill_file_path ? `已读取 ${payload.skill_file_path}` : '本轮会话已加载',
-    })
+    const chip = extractSkillChip(evt.payload || {}, seen)
+    if (chip) items.push(chip)
   }
+
+  // Fallback: session events from the session store timeline
+  // (covers historical sessions without an active dispatch task)
+  if (items.length === 0) {
+    for (const evt of (timeline.value.events || [])) {
+      const payloadJson = evt.payload_json || {}
+      const chip = extractSkillChip(payloadJson, seen)
+      if (chip) items.push(chip)
+    }
+  }
+
   return items
 })
 
@@ -937,7 +964,6 @@ async function submitCreateConversation() {
     const externalSessionId = `web_${Date.now()}`
     const payload = {
       external_session_id: externalSessionId,
-      title: 'Web Chat Session',
       platform: createConversationPlatform.value || 'hermes',
       user_message: trimmed,
     }
@@ -1279,6 +1305,7 @@ function resetTaskBoardCreateForm() {
     upstream_task_id: '',
     parent_task_id: '',
     status: 'draft',
+    status_reason: '',
     priority: 3,
   }
 }
@@ -1297,7 +1324,7 @@ async function startConversationFromTask(task) {
   try {
     const projectContext = resolveTaskProjectContext(task)
     const systemPrompt = buildTaskSystemPrompt(task, projectContext)
-    const platform = task.ai_platform || 'hermes'
+    const platform = safePlatform(task.ai_platform)
     const promptMessage = buildTaskStartMessage(task, projectContext)
 
     // Use dispatch orchestration layer instead of direct SSE (ADR-0004)
@@ -1364,7 +1391,7 @@ function buildTaskSystemPrompt(task, projectContext = null) {
   lines.push(`Task: ${task.name}`)
   if (task.description) lines.push(`Description: ${task.description}`)
   lines.push(`Status: ${taskBoardStatusLabelMap[task.status] || task.status}`)
-  lines.push(`AI Platform: ${task.ai_platform || 'hermes'}`)
+  lines.push(`AI Platform: ${safePlatform(task.ai_platform)}`)
 
   const context = projectContext || resolveTaskProjectContext(task)
   if (context?.name || context?.repositoryName || context?.repositoryUrl) {
@@ -1436,11 +1463,12 @@ function openTaskBoardEditModal(item) {
   taskBoardEditForm.value = {
     name: item.name,
     description: item.description || '',
-    ai_platform: item.ai_platform || 'hermes',
+    ai_platform: safePlatform(item.ai_platform),
     project_id: item.project_id || '',
     upstream_task_id: item.upstream_task_id || '',
     parent_task_id: item.parent_task_id || '',
     status: item.status || 'draft',
+    status_reason: item.status_reason || '',
     priority: item.priority ?? 3,
   }
   isTaskBoardEditModalOpen.value = true
@@ -1467,12 +1495,47 @@ function taskBoardDetailField(value) {
   return normalized || '-'
 }
 
+function requiresTaskStatusReason(status) {
+  return status === 'blocked' || status === 'cancelled'
+}
+
+function normalizeTaskStatusReason(status, reason) {
+  if (!requiresTaskStatusReason(status)) {
+    return ''
+  }
+  return String(reason || '').trim()
+}
+
+function getTaskStatusReasonPreview(item, maxLength = 96) {
+  const reason = String(item?.status_reason || '').trim()
+  if (!reason) {
+    return ''
+  }
+  if (reason.length <= maxLength) {
+    return reason
+  }
+  return `${reason.slice(0, maxLength).trimEnd()}...`
+}
+
+function ensureTaskStatusReasonBeforeSave(formState) {
+  const normalizedReason = normalizeTaskStatusReason(formState.status, formState.status_reason)
+  if (requiresTaskStatusReason(formState.status) && !normalizedReason) {
+    throw new Error('阻塞或取消任务时必须填写原因')
+  }
+  return normalizedReason
+}
+
 function buildTaskBoardUpdatePayload(item, patch) {
+  const nextStatus = patch.status ?? item.status ?? 'draft'
+  const nextReasonSource = Object.prototype.hasOwnProperty.call(patch, 'status_reason')
+    ? patch.status_reason
+    : (item.status_reason || '')
   return {
     name: item.name,
     description: item.description || '',
-    ai_platform: item.ai_platform || 'hermes',
-    status: item.status || 'draft',
+    ai_platform: safePlatform(item.ai_platform),
+    status: nextStatus,
+    status_reason: normalizeTaskStatusReason(nextStatus, nextReasonSource),
     priority: item.priority ?? 3,
     project_id: item.project_id || null,
     upstream_task_id: item.upstream_task_id || null,
@@ -1483,6 +1546,16 @@ function buildTaskBoardUpdatePayload(item, patch) {
 
 async function updateTaskBoardItemQuick(item, patch) {
   if (!item?.id || quickUpdatingTaskBoardItemId.value === item.id) {
+    return
+  }
+  const targetStatus = patch.status ?? item.status ?? 'draft'
+  if (
+    requiresTaskStatusReason(targetStatus)
+    && targetStatus !== (item.status ?? 'draft')
+    && !Object.prototype.hasOwnProperty.call(patch, 'status_reason')
+  ) {
+    openTaskBoardEditModal({ ...item, status: targetStatus, status_reason: '' })
+    errorMessage.value = `请先填写${taskBoardStatusLabelMap[targetStatus] || targetStatus}原因`
     return
   }
   quickUpdatingTaskBoardItemId.value = item.id
@@ -1530,11 +1603,13 @@ async function updateTaskBoardPriority(item, event) {
 }
 
 function buildTaskBoardPayload(formState) {
+  const normalizedReason = ensureTaskStatusReasonBeforeSave(formState)
   return {
     name: formState.name.trim(),
     description: formState.description.trim(),
-    ai_platform: formState.ai_platform.trim() || 'hermes',
+    ai_platform: safePlatform(formState.ai_platform),
     status: formState.status,
+    status_reason: normalizedReason,
     priority: formState.priority,
     project_id: formState.project_id || null,
     upstream_task_id: formState.upstream_task_id || null,
@@ -2055,12 +2130,12 @@ onUnmounted(() => {
               </button>
               <button
                 type="button"
-                class="conversation-delete-btn"
+                class="card-delete-btn conversation-delete-btn"
                 :aria-label="`删除对话 ${item.title}`"
                 :disabled="clearingSessions || deletingSessionId === item.id"
                 @click="deleteSession(item.id)"
               >
-                <span aria-hidden="true">🗑</span>
+                <span aria-hidden="true">×</span>
               </button>
             </div>
             <div v-if="sessions.length === 0" class="muted">暂无会话</div>
@@ -2145,6 +2220,9 @@ onUnmounted(() => {
               <button v-if="currentLinkedTask" type="button" class="status-task-chip" @click="openLinkedTaskFromStatus">
                 {{ currentLinkedTask.project_name || '未关联项目' }} · {{ currentLinkedTask.name }} · {{ taskBoardStatusLabelMap[currentLinkedTask.status] || currentLinkedTask.status }} · {{ KANBAN_PRIORITY_LABELS[getTaskPriority(currentLinkedTask)] }}
               </button>
+              <span v-if="requiresTaskStatusReason(currentLinkedTask?.status) && currentLinkedTask?.status_reason" class="status-task-reason-chip">
+                原因：{{ getTaskStatusReasonPreview(currentLinkedTask, 120) }}
+              </span>
               <span v-if="currentLoadedSkills.length" class="status-skill-group">
                 <button v-for="skill in currentLoadedSkills" :key="skill.name + skill.file_path" type="button" class="status-skill-chip" @click="openSkillDetail(skill)">{{ skill.name }}</button>
               </span>
@@ -2157,10 +2235,7 @@ onUnmounted(() => {
               :placeholder="dispatchIsRunning ? '输入修正内容，将打断当前 AI 回复并重新发送' : (dispatchAwaitingInput ? 'AI 正在等待你的回复...' : '输入消息，直接与 AI 对话')"
               @keydown="handleComposerKeydown"
             ></textarea>
-            <button v-if="dispatchIsCancellable" class="composer-send composer-cancel" type="button" @click="cancelDispatchTask">
-              取消任务
-            </button>
-            <button v-else class="composer-send" type="submit" :disabled="sending || !composerText.trim()">
+            <button class="composer-send" type="submit" :disabled="sending || !composerText.trim()">
               {{ sending ? '处理中...' : (dispatchIsRunning ? '打断并发送' : '发送') }}
             </button>
           </form>
@@ -2191,8 +2266,8 @@ onUnmounted(() => {
                 </div>
                 <div class="project-card-actions">
                   <button type="button" class="project-btn" @click="openProjectEditModal(item)">编辑</button>
-                  <button type="button" class="project-btn project-btn-danger" :disabled="deletingProjectId === item.id" @click="deleteProject(item)">
-                    {{ deletingProjectId === item.id ? '删除中...' : '删除' }}
+                  <button type="button" class="card-delete-btn" :disabled="deletingProjectId === item.id" :aria-label="`删除项目 ${item.name}`" @click="deleteProject(item)">
+                    <span aria-hidden="true">×</span>
                   </button>
                 </div>
               </div>
@@ -2303,10 +2378,13 @@ onUnmounted(() => {
                             <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
                             <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
                             <button v-if="item.status === 'completed' || item.status === 'cancelled'" type="button" class="project-btn project-btn-archive" :disabled="archivingTaskId === item.id" @click.stop="archiveTaskBoardItem(item)">{{ archivingTaskId === item.id ? '...' : '归档' }}</button>
-                            <button type="button" class="project-btn project-btn-danger" :disabled="deletingTaskBoardItemId === item.id" @click.stop="deleteTaskBoardItem(item)">{{ deletingTaskBoardItemId === item.id ? '...' : '删除' }}</button>
+                            <button type="button" class="card-delete-btn" :disabled="deletingTaskBoardItemId === item.id" :aria-label="`删除任务 ${item.name}`" @click.stop="deleteTaskBoardItem(item)"><span aria-hidden="true">×</span></button>
                           </div>
                         </div>
                         <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
+                        <div v-if="requiresTaskStatusReason(item.status) && item.status_reason" class="task-board-status-reason">
+                          原因：{{ getTaskStatusReasonPreview(item) }}
+                        </div>
                         <div class="task-board-meta task-board-meta-inline">
                           <span class="task-board-meta-label">{{ item.ai_platform }}</span>
                           <span class="task-board-meta-label muted">{{ formatSessionTime(item.updated_at) }}</span>
@@ -2329,10 +2407,16 @@ onUnmounted(() => {
                                 <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(child)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(child)">编辑</button><button v-if="child.status === 'completed' || child.status === 'cancelled'" type="button" class="project-btn project-btn-archive" :disabled="archivingTaskId === child.id" @click.stop="archiveTaskBoardItem(child)">{{ archivingTaskId === child.id ? '...' : '归档' }}</button></div>
                               </div>
                               <div class="task-board-desc task-board-desc-compact">{{ child.description || '暂无描述' }}</div>
+                              <div v-if="requiresTaskStatusReason(child.status) && child.status_reason" class="task-board-status-reason">
+                                原因：{{ getTaskStatusReasonPreview(child) }}
+                              </div>
                               <div v-if="child.children.length && !collapsedTaskNodes.has(child.id)" class="task-tree-children">
                                 <div v-for="grandchild in child.children" :key="grandchild.id" class="task-board-card task-board-card-child task-board-card-grandchild" :class="{ 'task-board-card-highlighted': highlightedTaskBoardItemId === grandchild.id }">
                                   <div class="task-board-card-top"><div class="task-board-title-wrap"><div class="task-board-name-row"><span class="task-tree-spacer"></span><span class="task-board-name">{{ grandchild.name }}</span></div><div class="task-board-badges"><span class="priority-badge" :class="`priority-P${getTaskPriority(grandchild) - 1}`">{{ KANBAN_PRIORITY_LABELS[getTaskPriority(grandchild)] }}</span></div></div><div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(grandchild)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(grandchild)">编辑</button></div></div>
                                   <div class="task-board-desc task-board-desc-compact">{{ grandchild.description || '暂无描述' }}</div>
+                                  <div v-if="requiresTaskStatusReason(grandchild.status) && grandchild.status_reason" class="task-board-status-reason">
+                                    原因：{{ getTaskStatusReasonPreview(grandchild) }}
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -2963,7 +3047,9 @@ onUnmounted(() => {
 
           <label class="create-field">
             <span class="create-field-label">AI 平台</span>
-            <input v-model="taskBoardCreateForm.ai_platform" class="picker-search-input" :disabled="creatingTaskBoardItem" placeholder="hermes" />
+            <select v-model="taskBoardCreateForm.ai_platform" class="picker-provider-select" :disabled="creatingTaskBoardItem">
+              <option value="hermes">Hermes Agent</option>
+            </select>
           </label>
 
           <label class="create-field">
@@ -2995,6 +3081,10 @@ onUnmounted(() => {
             <select v-model="taskBoardCreateForm.status" class="picker-provider-select" :disabled="creatingTaskBoardItem">
               <option v-for="opt in taskBoardStatusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
+          </label>
+          <label v-if="requiresTaskStatusReason(taskBoardCreateForm.status)" class="create-field">
+            <span class="create-field-label">状态原因</span>
+            <textarea v-model="taskBoardCreateForm.status_reason" class="create-initial-message" :disabled="creatingTaskBoardItem" :placeholder="`请输入${taskBoardStatusLabelMap[taskBoardCreateForm.status] || taskBoardCreateForm.status}原因`"></textarea>
           </label>
           <label class="create-field-row">
             <span class="create-field-label">优先级</span>
@@ -3031,6 +3121,10 @@ onUnmounted(() => {
             <h4>任务描述</h4>
             <div v-if="taskBoardDetailItem.description" class="task-detail-markdown" v-html="renderMarkdown(taskBoardDetailItem.description)"></div>
             <div v-else class="muted">暂无描述</div>
+          </section>
+          <section v-if="requiresTaskStatusReason(taskBoardDetailItem.status) && taskBoardDetailItem.status_reason" class="task-detail-section">
+            <h4>状态原因</h4>
+            <div class="task-detail-reason">{{ taskBoardDetailItem.status_reason }}</div>
           </section>
           <section class="task-detail-grid">
             <div><span>项目</span><strong>{{ taskBoardDetailField(taskBoardDetailItem.project_name) }}</strong></div>
@@ -3069,7 +3163,9 @@ onUnmounted(() => {
 
           <label class="create-field">
             <span class="create-field-label">AI 平台</span>
-            <input v-model="taskBoardEditForm.ai_platform" class="picker-search-input" :disabled="updatingTaskBoardItem" placeholder="hermes" />
+            <select v-model="taskBoardEditForm.ai_platform" class="picker-provider-select" :disabled="updatingTaskBoardItem">
+              <option value="hermes">Hermes Agent</option>
+            </select>
           </label>
 
           <label class="create-field">
@@ -3101,6 +3197,10 @@ onUnmounted(() => {
             <select v-model="taskBoardEditForm.status" class="picker-provider-select" :disabled="updatingTaskBoardItem">
               <option v-for="opt in taskBoardStatusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
+          </label>
+          <label v-if="requiresTaskStatusReason(taskBoardEditForm.status)" class="create-field">
+            <span class="create-field-label">状态原因</span>
+            <textarea v-model="taskBoardEditForm.status_reason" class="create-initial-message" :disabled="updatingTaskBoardItem" :placeholder="`请输入${taskBoardStatusLabelMap[taskBoardEditForm.status] || taskBoardEditForm.status}原因`"></textarea>
           </label>
           <label class="create-field-row">
             <span class="create-field-label">优先级</span>

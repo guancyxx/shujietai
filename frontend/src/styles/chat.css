@@ -99,29 +99,11 @@
 }
 
 .conversation-delete-btn {
-  border: 1px solid rgba(255, 172, 172, 0.35);
-  background: rgba(71, 29, 48, 0.62);
-  color: #ffdede;
-  width: 30px;
-  height: 30px;
   margin: 10px 10px 10px 0;
-  border-radius: 8px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   z-index: 2;
 }
 
-.conversation-delete-btn:hover {
-  background: rgba(110, 35, 59, 0.82);
-  border-color: rgba(255, 150, 150, 0.62);
-}
-
-.conversation-delete-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+/* visual styling handled by .card-delete-btn (base.css) */
 
 .conversation-task::before {
   content: '';
@@ -452,6 +434,19 @@ h2 {
   background: rgba(14, 165, 233, 0.22);
 }
 
+.status-task-reason-chip {
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde68a;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.74rem;
+  max-width: min(100%, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-skill-group {
   display: inline-flex;
   flex-wrap: wrap;
@@ -513,11 +508,6 @@ h2 {
 .composer-send:disabled {
   opacity: 0.55;
   cursor: not-allowed;
-}
-
-.composer-cancel {
-  background: linear-gradient(135deg, rgba(220, 60, 60, 0.85), rgba(200, 80, 60, 0.85));
-  border-color: rgba(220, 80, 80, 0.55);
 }
 
 .streaming-indicator {
