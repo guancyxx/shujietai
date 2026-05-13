@@ -1,7 +1,7 @@
 """normalize ai_platform: none/empty → hermes (idempotent migration)
 
-Revision ID: 20260513_0010
-Revises: 20260513_0009
+Revision ID: 20260513_0011
+Revises: 20260513_0010
 Create Date: 2026-05-13
 """
 from collections.abc import Sequence
@@ -9,8 +9,8 @@ from collections.abc import Sequence
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "20260513_0010"
-down_revision: str | None = "20260513_0009"
+revision: str = "20260513_0011"
+down_revision: str | None = "20260513_0010"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
