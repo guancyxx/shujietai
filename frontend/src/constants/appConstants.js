@@ -2,6 +2,7 @@ export const PAGE_WHITELIST = [
   'chat',
   'projects',
   'task-board',
+  'task-archive',
   'model-config',
   'system-config',
   'dispatch-history',

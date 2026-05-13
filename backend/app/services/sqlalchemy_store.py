@@ -425,6 +425,8 @@ class SqlAlchemySessionStore:
             status=row.status,
             status_reason=(row.status_reason or "").strip(),
             priority=row.priority,
+            archived=bool(row.archived),
+            archived_at=row.archived_at,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -439,9 +441,30 @@ class SqlAlchemySessionStore:
 
     def list_task_board_items(self, project_id: str | None = None, keyword: str | None = None) -> list[TaskBoardItem]:
         with self._session_factory() as db:
-            statement = select(TaskBoardEntity).order_by(TaskBoardEntity.created_at.asc())
+            # Default: exclude archived tasks from active board
+            statement = select(TaskBoardEntity).where(TaskBoardEntity.archived == False).order_by(TaskBoardEntity.created_at.asc())
             if project_id:
                 statement = statement.where(TaskBoardEntity.project_id == project_id)
+            rows = db.execute(statement).scalars().all()
+            normalized_keyword = (keyword or "").strip().lower()
+            if normalized_keyword:
+                rows = [
+                    row
+                    for row in rows
+                    if normalized_keyword in f"{row.name} {row.description} {row.ai_platform}".lower()
+                ]
+            return [self._build_task_board_item(db, row) for row in rows]
+
+    def list_archived_task_board_items(
+        self, project_id: str | None = None, keyword: str | None = None,
+        status: str | None = None,
+    ) -> list[TaskBoardItem]:
+        with self._session_factory() as db:
+            statement = select(TaskBoardEntity).where(TaskBoardEntity.archived == True).order_by(TaskBoardEntity.archived_at.desc())
+            if project_id:
+                statement = statement.where(TaskBoardEntity.project_id == project_id)
+            if status:
+                statement = statement.where(TaskBoardEntity.status == status)
             rows = db.execute(statement).scalars().all()
             normalized_keyword = (keyword or "").strip().lower()
             if normalized_keyword:
@@ -510,6 +533,14 @@ class SqlAlchemySessionStore:
                     entity.status_reason = self._normalize_task_status_reason(target_status, target_reason)
                 if payload.priority is not None:
                     entity.priority = payload.priority
+                if payload.archived is not None:
+                    if payload.archived and entity.status not in ("completed", "cancelled"):
+                        raise ValueError("can_only_archive_completed_or_cancelled")
+                    entity.archived = bool(payload.archived)
+                    if payload.archived:
+                        entity.archived_at = self.now()
+                    else:
+                        entity.archived_at = None
 
                 if "project_id" in payload.model_fields_set:
                     project_id = str(payload.project_id) if payload.project_id is not None else None

@@ -180,6 +180,7 @@ class TaskBoardUpdateRequest(BaseModel):
     status: TaskBoardStatus | None = None
     status_reason: str | None = Field(default=None, max_length=2000)
     priority: int | None = Field(default=None, ge=1, le=4)
+    archived: bool | None = None
 
     @field_validator("ai_platform")
     @classmethod
@@ -203,6 +204,8 @@ class TaskBoardItem(BaseModel):
     status: TaskBoardStatus
     status_reason: str = ""
     priority: int = 3
+    archived: bool = False
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

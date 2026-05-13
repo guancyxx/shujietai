@@ -485,4 +485,62 @@
   word-break: break-word;
 }
 
+.project-btn-archive {
+  color: #9fc7ed;
+  border-color: rgba(124, 197, 255, 0.28);
+}
+
+.project-btn-archive:hover {
+  border-color: rgba(94, 220, 255, 0.64);
+  color: #f4fbff;
+}
+
+.archive-list {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  align-content: start;
+  padding: 4px 4px 6px;
+}
+
+.archive-list .task-board-card {
+  cursor: default;
+}
+
+.task-status-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  min-height: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.task-detail-heading {
+  margin: 0 0 8px;
+  color: #eff8ff;
+  font-size: 18px;
+}
+
+.task-detail-meta-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.task-detail-desc {
+  color: #dcecff;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 
