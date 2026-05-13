@@ -27,6 +27,7 @@ from app.schemas import (
     ProjectListResponse,
     ProjectUpdateRequest,
     RuntimePreferenceUpdateRequest,
+    SessionReadResponse,
     SystemConfigResponse,
     SystemConfigUpdateRequest,
     TaskBoardCreateRequest,
@@ -951,6 +952,14 @@ def delete_session(session_id: str):
 def clear_sessions():
     deleted_count = store.clear_sessions()
     return {"deleted": deleted_count}
+
+
+@app.post("/api/v1/sessions/{session_id}/read", response_model=SessionReadResponse)
+def mark_session_read(session_id: str):
+    read_at = store.mark_session_read(session_id)
+    if read_at is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return SessionReadResponse(session_id=session_id, last_read_at=read_at, unread_count=0)
 
 
 @app.get("/api/v1/sessions/{session_id}")

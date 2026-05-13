@@ -9,7 +9,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
-from app.db.models import EventEntity, MessageEntity, ProjectEntity, SessionEntity, SessionMetricsEntity, TaskBoardEntity, TaskEntity
+from app.db.models import DispatchTaskEntity, EventEntity, MessageEntity, ProjectEntity, SessionEntity, SessionMetricsEntity, TaskBoardEntity, TaskEntity
 from app.schemas import (
     CockpitResponse,
     EventItem,
@@ -78,6 +78,8 @@ class SqlAlchemySessionStore:
                 if duplicate is not None and duplicate.platform == payload.platform:
                     return session_entity.id, True
 
+                session_entity.last_activity_at = self.now()
+
                 db.add(
                     EventEntity(
                         id=payload.event_id,
@@ -137,6 +139,8 @@ class SqlAlchemySessionStore:
             status="active",
             started_at=self.now(),
             ended_at=None,
+            last_read_at=None,
+            last_activity_at=self.now(),
             message_count=0,
             task_count=0,
         )
@@ -179,27 +183,45 @@ class SqlAlchemySessionStore:
         session.message_count = db.query(MessageEntity).filter(MessageEntity.session_id == session_id).count()
         session.task_count = db.query(TaskEntity).filter(TaskEntity.session_id == session_id).count()
 
+    def _dispatch_status_by_external_session_id(self, db: Session) -> dict[str, str]:
+        rows = db.execute(select(DispatchTaskEntity)).scalars().all()
+        return {
+            task.external_session_id: task.status
+            for task in rows
+            if task.external_session_id
+        }
+
+    def _build_session_summary(
+        self,
+        row: SessionEntity,
+        dispatch_status_by_external_session_id: dict[str, str],
+    ) -> SessionSummary:
+        last_activity_at = row.last_activity_at or row.started_at
+        effective_status = dispatch_status_by_external_session_id.get(row.external_session_id, row.status)
+        unread_count = 0
+        if row.last_read_at is not None and last_activity_at > row.last_read_at:
+            unread_count = 1
+        return SessionSummary(
+            id=row.id,
+            platform=row.platform,
+            external_session_id=row.external_session_id,
+            title=row.title,
+            status=row.status,
+            effective_status=effective_status,
+            started_at=row.started_at,
+            ended_at=row.ended_at,
+            created_at=row.started_at,
+            updated_at=last_activity_at,
+            last_read_at=row.last_read_at,
+            last_activity_at=last_activity_at,
+            unread_count=unread_count,
+        )
+
     def list_sessions(self) -> list[SessionSummary]:
         with self._session_factory() as db:
             rows = db.execute(select(SessionEntity)).scalars().all()
-            metrics_by_session_id = {
-                metrics.session_id: metrics.updated_at
-                for metrics in db.execute(select(SessionMetricsEntity)).scalars().all()
-            }
-            summaries = [
-                SessionSummary(
-                    id=row.id,
-                    platform=row.platform,
-                    external_session_id=row.external_session_id,
-                    title=row.title,
-                    status=row.status,
-                    started_at=row.started_at,
-                    ended_at=row.ended_at,
-                    created_at=row.started_at,
-                    updated_at=metrics_by_session_id.get(row.id, row.started_at),
-                )
-                for row in rows
-            ]
+            dispatch_statuses = self._dispatch_status_by_external_session_id(db)
+            summaries = [self._build_session_summary(row, dispatch_statuses) for row in rows]
             return sorted(summaries, key=lambda session: (session.updated_at, session.created_at), reverse=True)
 
     def get_session(self, session_id: str) -> SessionDetail | None:
@@ -207,21 +229,22 @@ class SqlAlchemySessionStore:
             row = db.get(SessionEntity, session_id)
             if row is None:
                 return None
-            metrics = db.get(SessionMetricsEntity, row.id)
-            updated_at = metrics.updated_at if metrics is not None else row.started_at
+            dispatch_statuses = self._dispatch_status_by_external_session_id(db)
+            summary = self._build_session_summary(row, dispatch_statuses)
             return SessionDetail(
-                id=row.id,
-                platform=row.platform,
-                external_session_id=row.external_session_id,
-                title=row.title,
-                status=row.status,
-                started_at=row.started_at,
-                ended_at=row.ended_at,
-                created_at=row.started_at,
-                updated_at=updated_at,
+                **summary.model_dump(),
                 message_count=row.message_count,
                 task_count=row.task_count,
             )
+
+    def mark_session_read(self, session_id: str) -> datetime | None:
+        with self._lock:
+            with self._session_factory.begin() as db:
+                row = db.get(SessionEntity, session_id)
+                if row is None:
+                    return None
+                row.last_read_at = self.now()
+                return row.last_read_at
 
     def get_timeline(self, session_id: str) -> TimelineResponse | None:
         with self._session_factory() as db:

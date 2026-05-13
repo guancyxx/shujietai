@@ -28,6 +28,7 @@ const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 const sessions = ref([])
 const selectedSessionId = ref('')
 const selectedExternalSessionId = ref('')
+let sessionListRefreshTimer = null
 const timeline = ref({ messages: [], events: [] })
 const cockpit = ref(null)
 const loading = ref(false)
@@ -904,10 +905,31 @@ function createNewConversation() {
   openCreateConversationModal()
 }
 
-function selectConversation(sessionId, externalSessionId) {
+async function markSessionRead(sessionId) {
+  if (!sessionId) return
+  const existing = sessions.value.find((item) => item.id === sessionId)
+  if (existing?.unread_count === 0 && existing?.last_read_at) return
+  const readAt = new Date().toISOString()
+  sessions.value = sessions.value.map((item) => (
+    item.id === sessionId ? { ...item, unread_count: 0, last_read_at: readAt } : item
+  ))
+  try {
+    const result = await postJson(`${apiBase}/api/v1/sessions/${sessionId}/read`, {})
+    sessions.value = sessions.value.map((item) => (
+      item.id === sessionId
+        ? { ...item, unread_count: result.unread_count ?? 0, last_read_at: result.last_read_at || readAt }
+        : item
+    ))
+  } catch (error) {
+    console.warn('Failed to mark session as read', error)
+  }
+}
+
+async function selectConversation(sessionId, externalSessionId) {
   selectedSessionId.value = sessionId
   selectedExternalSessionId.value = externalSessionId
   isBlankChatMode.value = false
+  await markSessionRead(sessionId)
 }
 
 function activateBlankChat() {
@@ -938,6 +960,44 @@ function formatSessionTime(value) {
     return '-'
   }
   return parsed.toLocaleString()
+}
+
+function getSessionStatus(session) {
+  return session?.effective_status || session?.status || 'active'
+}
+
+function getSessionStatusLabel(session) {
+  const status = getSessionStatus(session)
+  const labelMap = {
+    active: '活跃',
+    running: '运行中',
+    queued: '排队中',
+    awaiting_input: '等待输入',
+    paused: '暂停',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
+    aborted: '已中止',
+    archived: '已归档',
+  }
+  return dispatchStatusLabelMap[status] || labelMap[status] || status
+}
+
+function getSessionStatusTone(session) {
+  const status = getSessionStatus(session)
+  if (['completed', 'archived'].includes(status)) return 'done'
+  if (['failed', 'cancelled', 'aborted'].includes(status)) return 'error'
+  if (['awaiting_input', 'paused'].includes(status)) return 'waiting'
+  return 'active'
+}
+
+function getSessionUnreadCount(session) {
+  if (!session || session.id === selectedSessionId.value) return 0
+  return Number(session.unread_count || 0)
+}
+
+function getSessionActivityTime(session) {
+  return session?.last_activity_at || session?.updated_at || session?.started_at || session?.created_at
 }
 
 function formatTime(value) {
@@ -1024,12 +1084,27 @@ async function loadSessionData() {
   if (!selectedSessionId.value) {
     return
   }
-  const timelineData = await fetchJson(`${apiBase}/api/v1/sessions/${selectedSessionId.value}/timeline`)
-  const cockpitData = await fetchCockpitData(selectedSessionId.value)
+  const sessionId = selectedSessionId.value
+  const timelineData = await fetchJson(`${apiBase}/api/v1/sessions/${sessionId}/timeline`)
+  const cockpitData = await fetchCockpitData(sessionId)
   timeline.value = timelineData
   cockpit.value = cockpitData
+  await markSessionRead(sessionId)
   if (cockpitData) {
     syncRuntimeSelectionsFromCockpit()
+  }
+}
+
+async function refreshSessionListStatus() {
+  if (activePage.value !== 'chat') return
+  try {
+    await loadSessions()
+    const current = sessions.value.find((item) => item.id === selectedSessionId.value)
+    if (current && Number(current.unread_count || 0) > 0) {
+      await markSessionRead(current.id)
+    }
+  } catch (error) {
+    console.warn('Failed to refresh session list status', error)
   }
 }
 
@@ -1842,6 +1917,7 @@ watch(selectedSessionId, async () => {
     errorMessage.value = ''
     await loadSessionData()
     await restoreActiveDispatchTask()
+    await loadSessions()
     scrollToBottom(true)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
@@ -1876,10 +1952,17 @@ onMounted(async () => {
   // Initialize WebSocket connection for dispatch orchestration (ADR-0004)
   wsConnect()
   await refreshData()
+  sessionListRefreshTimer = window.setInterval(() => {
+    void refreshSessionListStatus()
+  }, 10000)
 })
 
 // Cleanup active dispatch task on unmount
 onUnmounted(() => {
+  if (sessionListRefreshTimer) {
+    window.clearInterval(sessionListRefreshTimer)
+    sessionListRefreshTimer = null
+  }
   clearActiveTask()
 })
 </script>
@@ -1985,10 +2068,17 @@ onUnmounted(() => {
                   <div class="task-title conversation-task-title">{{ item.title }}</div>
                   <span class="conversation-platform-pill">{{ item.platform }}</span>
                 </div>
-                <div class="conversation-task-subtitle">{{ item.external_session_id }}</div>
+                <div class="conversation-task-subtitle">
+                  <span :class="['conversation-status-pill', `status-${getSessionStatusTone(item)}`]">
+                    {{ getSessionStatusLabel(item) }}
+                  </span>
+                  <span v-if="getSessionUnreadCount(item) > 0" class="conversation-unread-badge" aria-label="未读消息">
+                    {{ getSessionUnreadCount(item) > 99 ? '99+' : getSessionUnreadCount(item) }}
+                  </span>
+                </div>
                 <div class="conversation-task-meta-row">
-                  <span class="conversation-meta-label">开始时间</span>
-                  <span class="conversation-meta-value">{{ formatSessionTime(item.started_at) }}</span>
+                  <span class="conversation-meta-label">最近活动</span>
+                  <span class="conversation-meta-value">{{ formatSessionTime(getSessionActivityTime(item)) }}</span>
                 </div>
               </button>
               <button

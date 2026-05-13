@@ -73,10 +73,14 @@ class SessionStore:
             external_session_id=payload.external_session_id,
             title=payload.title or f"Session {payload.external_session_id}",
             status="active",
+            effective_status="active",
             started_at=created_at,
             ended_at=None,
             created_at=created_at,
             updated_at=created_at,
+            last_read_at=None,
+            last_activity_at=created_at,
+            unread_count=0,
             message_count=0,
             task_count=0,
         )
@@ -156,10 +160,14 @@ class SessionStore:
             external_session_id=session.external_session_id,
             title=session.title,
             status=session.status,
+            effective_status=session.effective_status,
             started_at=session.started_at,
             ended_at=session.ended_at,
             created_at=session.created_at,
             updated_at=updated_at,
+            last_read_at=session.last_read_at,
+            last_activity_at=updated_at,
+            unread_count=1 if session.last_read_at is not None and updated_at > session.last_read_at else 0,
             message_count=len(self._messages[session_id]),
             task_count=len(self._tasks[session_id]),
         )
@@ -177,16 +185,34 @@ class SessionStore:
                 external_session_id=s.external_session_id,
                 title=s.title,
                 status=s.status,
+                effective_status=s.effective_status,
                 started_at=s.started_at,
                 ended_at=s.ended_at,
                 created_at=s.created_at,
                 updated_at=s.updated_at,
+                last_read_at=s.last_read_at,
+                last_activity_at=s.last_activity_at,
+                unread_count=s.unread_count,
             )
             for s in ordered_sessions
         ]
 
     def get_session(self, session_id: str) -> SessionDetail | None:
         return self._sessions.get(session_id)
+
+    def mark_session_read(self, session_id: str) -> datetime | None:
+        with self._lock:
+            current = self._sessions.get(session_id)
+            if current is None:
+                return None
+            read_at = self._now()
+            self._sessions[session_id] = current.model_copy(
+                update={
+                    "last_read_at": read_at,
+                    "unread_count": 0,
+                }
+            )
+            return read_at
 
     def get_timeline(self, session_id: str) -> TimelineResponse | None:
         if session_id not in self._sessions:

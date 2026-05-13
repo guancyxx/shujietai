@@ -182,15 +182,25 @@ class SessionSummary(BaseModel):
     external_session_id: str
     title: str
     status: str
+    effective_status: str
     started_at: datetime
     ended_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    last_read_at: datetime | None = None
+    last_activity_at: datetime
+    unread_count: int = 0
 
 
 class SessionDetail(SessionSummary):
     message_count: int
     task_count: int
+
+
+class SessionReadResponse(BaseModel):
+    session_id: str
+    last_read_at: datetime
+    unread_count: int = 0
 
 
 class MessageItem(BaseModel):

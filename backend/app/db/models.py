@@ -20,6 +20,8 @@ class SessionEntity(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     task_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

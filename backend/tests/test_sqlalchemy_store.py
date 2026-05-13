@@ -202,3 +202,92 @@ def test_sqlalchemy_store_task_board_crud_and_filters() -> None:
     assert remaining[0].id == second.id
     assert remaining[0].upstream_task_id is None
     assert remaining[0].parent_task_id is None
+
+
+def test_sqlalchemy_store_persists_session_read_state_and_unread_count() -> None:
+    from app.services.sqlalchemy_store import SqlAlchemySessionStore
+
+    store = SqlAlchemySessionStore("sqlite+pysqlite:///:memory:")
+    base = datetime(2026, 5, 13, 10, 0, tzinfo=UTC)
+    ticks = iter([
+        base, base, base, base, base,
+        base + timedelta(minutes=1),
+        base + timedelta(minutes=2),
+        base + timedelta(minutes=2),
+        base + timedelta(minutes=2),
+        base + timedelta(minutes=2),
+    ])
+    store.now = lambda: next(ticks)
+
+    session_id, duplicate = store.ingest(IngestEventRequest(
+        platform="hermes",
+        event_id="evt_read_1",
+        event_type="message_created",
+        external_session_id="read_sess",
+        title="Read Session",
+        message={"role": "user", "content": "hello"},
+    ))
+    assert duplicate is False
+    assert store.mark_session_read(session_id) is not None
+
+    sessions_after_read = store.list_sessions()
+    assert sessions_after_read[0].unread_count == 0
+    assert sessions_after_read[0].last_read_at is not None
+
+    store.ingest(IngestEventRequest(
+        platform="hermes",
+        event_id="evt_read_2",
+        event_type="message_created",
+        external_session_id="read_sess",
+        title="Read Session",
+        message={"role": "assistant", "content": "reply"},
+    ))
+
+    sessions_after_new_activity = store.list_sessions()
+    assert sessions_after_new_activity[0].unread_count == 1
+    assert sessions_after_new_activity[0].last_activity_at > sessions_after_new_activity[0].last_read_at
+
+    assert store.mark_session_read(session_id) is not None
+    assert store.list_sessions()[0].unread_count == 0
+
+
+def test_sqlalchemy_store_projects_dispatch_status_into_session_summary() -> None:
+    from app.db.models import DispatchTaskEntity
+    from app.services.sqlalchemy_store import SqlAlchemySessionStore
+
+    store = SqlAlchemySessionStore("sqlite+pysqlite:///:memory:")
+    session_id, duplicate = store.ingest(IngestEventRequest(
+        platform="hermes",
+        event_id="evt_dispatch_status_1",
+        event_type="session_started",
+        external_session_id="dispatch_dt_status_test",
+        title="Dispatch Session",
+        message={"role": "user", "content": "start"},
+    ))
+    assert duplicate is False
+
+    now = store.now()
+    with store.session_factory.begin() as db:
+        db.add(DispatchTaskEntity(
+            id="dt_status_test",
+            task_board_item_id=None,
+            status="awaiting_input",
+            ai_platform="hermes",
+            external_session_id="dispatch_dt_status_test",
+            config={},
+            initial_prompt="start",
+            error_message=None,
+            current_run_id="run_test",
+            last_sequence=0,
+            started_at=now,
+            finished_at=None,
+            created_at=now,
+            updated_at=now,
+        ))
+
+    summary = store.list_sessions()[0]
+    detail = store.get_session(session_id)
+    assert summary.status == "active"
+    assert summary.effective_status == "awaiting_input"
+    assert detail is not None
+    assert detail.effective_status == "awaiting_input"
