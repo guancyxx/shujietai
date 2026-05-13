@@ -2149,10 +2149,7 @@ onUnmounted(() => {
               :placeholder="dispatchIsRunning ? '输入修正内容，将打断当前 AI 回复并重新发送' : (dispatchAwaitingInput ? 'AI 正在等待你的回复...' : '输入消息，直接与 AI 对话')"
               @keydown="handleComposerKeydown"
             ></textarea>
-            <button v-if="dispatchIsCancellable" class="composer-send composer-cancel" type="button" @click="cancelDispatchTask">
-              取消任务
-            </button>
-            <button v-else class="composer-send" type="submit" :disabled="sending || !composerText.trim()">
+            <button class="composer-send" type="submit" :disabled="sending || !composerText.trim()">
               {{ sending ? '处理中...' : (dispatchIsRunning ? '打断并发送' : '发送') }}
             </button>
           </form>

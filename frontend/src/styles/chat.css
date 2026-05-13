@@ -510,11 +510,6 @@ h2 {
   cursor: not-allowed;
 }
 
-.composer-cancel {
-  background: linear-gradient(135deg, rgba(220, 60, 60, 0.85), rgba(200, 80, 60, 0.85));
-  border-color: rgba(220, 80, 80, 0.55);
-}
-
 .streaming-indicator {
   display: inline-block;
   margin-left: 8px;
