@@ -886,7 +886,6 @@ async function submitCreateConversation() {
     const externalSessionId = `web_${Date.now()}`
     const payload = {
       external_session_id: externalSessionId,
-      title: 'Web Chat Session',
       platform: createConversationPlatform.value || 'hermes',
       user_message: trimmed,
     }
