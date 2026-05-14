@@ -11,12 +11,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.models import DispatchTaskEntity, TaskBoardEntity
 from app.schemas import DispatchTaskItem
-from app.services.dispatch_service import DispatchService, _entity_to_item
+from app.services.dispatch_service import ACTIVE_DISPATCH_STATUSES, DispatchService, _entity_to_item
 
 logger = logging.getLogger(__name__)
 
 _CANCELLED_REVIEW_REASON = "Dispatch was cancelled; user review is required."
-_ACTIVE_DISPATCH_STATUSES = {"queued", "running", "awaiting_input", "paused"}
 
 
 class WorkerPoolProtocol(Protocol):
@@ -57,7 +56,7 @@ class TaskLifecycleService:
                     select(DispatchTaskEntity)
                     .where(
                         DispatchTaskEntity.task_board_item_id == task_board_item_id,
-                        DispatchTaskEntity.status.in_(_ACTIVE_DISPATCH_STATUSES),
+                        DispatchTaskEntity.status.in_(ACTIVE_DISPATCH_STATUSES),
                     )
                     .order_by(DispatchTaskEntity.created_at.asc())
                     .limit(1)

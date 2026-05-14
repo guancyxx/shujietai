@@ -39,8 +39,11 @@ _TRANSITIONS: dict[str, set[str]] = {
 }
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "aborted"}
-_ACTIVE_STATUSES = {"queued", "running", "awaiting_input", "paused"}
-_DISPATCH_NON_TERMINAL_STATUSES = {"queued", "running", "awaiting_input", "paused"}
+# Canonical set of non-terminal (active) dispatch statuses — import this instead of redefining.
+ACTIVE_DISPATCH_STATUSES: frozenset[str] = frozenset({"queued", "running", "awaiting_input", "paused"})
+# Keep legacy private aliases for backwards compatibility within this module.
+_ACTIVE_STATUSES = ACTIVE_DISPATCH_STATUSES
+_DISPATCH_NON_TERMINAL_STATUSES = ACTIVE_DISPATCH_STATUSES
 
 
 def _now() -> datetime:

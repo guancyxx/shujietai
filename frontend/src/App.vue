@@ -188,7 +188,7 @@ async function loadArchivedTasks() {
 }
 
 async function archiveTaskBoardItem(item) {
-  if (!item?.id || archivingTaskId.value) {
+  if (!item?.id || archivingTaskId.value === item.id) {
     return
   }
   const statusWarning = ['in_progress', 'pending_execution'].includes(item.status)

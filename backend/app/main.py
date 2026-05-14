@@ -1044,7 +1044,9 @@ def update_task_board_item(task_id: str, payload: TaskBoardUpdateRequest):
 @app.patch("/api/v1/task-board/{task_id}/archive")
 def archive_task_board_item(task_id: str):
     """Archive a task (any status), cancelling active dispatch if any."""
-    lifecycle: TaskLifecycleService = app.state.task_lifecycle_service
+    lifecycle: TaskLifecycleService | None = getattr(app.state, "task_lifecycle_service", None)
+    if lifecycle is None:
+        raise HTTPException(status_code=503, detail="lifecycle_service_unavailable")
     ok = lifecycle.archive_task(task_id)
     if not ok:
         raise HTTPException(status_code=404, detail="task_board_item_not_found")
