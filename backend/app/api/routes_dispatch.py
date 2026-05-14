@@ -16,6 +16,7 @@ from app.schemas import (
 )
 from app.services.dispatch_service import DispatchService
 from app.services.dispatch_worker import DispatchWorkerPool
+from app.services.task_lifecycle import TaskLifecycleService
 
 router = APIRouter(prefix="/api/v1/dispatch", tags=["dispatch"])
 
@@ -36,6 +37,14 @@ def _get_worker_pool() -> DispatchWorkerPool:
     return pool
 
 
+def _get_task_lifecycle_service() -> TaskLifecycleService:
+    from app.main import app
+    lifecycle = getattr(app.state, "task_lifecycle_service", None)
+    if lifecycle is None:
+        raise HTTPException(status_code=503, detail="task_lifecycle_service_unavailable")
+    return lifecycle
+
+
 @router.get("", response_model=DispatchTaskListResponse)
 def list_dispatch_tasks(
     status: str | None = Query(default=None, description="Filter by status"),
@@ -48,7 +57,12 @@ def list_dispatch_tasks(
 @router.post("", response_model=DispatchTaskItem, status_code=201)
 async def create_dispatch_task(payload: DispatchCreateRequest) -> DispatchTaskItem:
     svc = _get_dispatch_service()
-    pool = _get_worker_pool()
+    lifecycle = _get_task_lifecycle_service()
+
+    if payload.task_board_item_id:
+        active = svc.get_active_task_for_task_board_item(payload.task_board_item_id)
+        if active is not None:
+            return active
 
     task = svc.create_task(payload)
 
@@ -56,8 +70,11 @@ async def create_dispatch_task(payload: DispatchCreateRequest) -> DispatchTaskIt
     if updated is None:
         raise HTTPException(status_code=500, detail="dispatch_transition_failed")
 
-    # Start the async worker for this task (must be in async context for event loop)
-    pool.start_task(updated)
+    if not lifecycle.start_task_safe(updated, task_board_item_id=payload.task_board_item_id):
+        active = svc.get_active_task_for_task_board_item(payload.task_board_item_id or "")
+        if active is not None:
+            return active
+        raise HTTPException(status_code=409, detail="dispatch_task_duplicate_active")
     return updated
 
 
@@ -87,13 +104,13 @@ def list_dispatch_events(
 @router.post("/{task_id}/resume", response_model=DispatchTaskItem)
 async def resume_dispatch_task(task_id: str, payload: DispatchResumeRequest) -> DispatchTaskItem:
     svc = _get_dispatch_service()
-    pool = _get_worker_pool()
+    lifecycle = _get_task_lifecycle_service()
 
     task = svc.resume_task(task_id, payload)
     if task is None:
         raise HTTPException(status_code=409, detail="dispatch_task_not_resumable")
 
-    pool.start_task(task)
+    lifecycle.start_task_safe(task, task_board_item_id=task.task_board_item_id)
     return task
 
 
