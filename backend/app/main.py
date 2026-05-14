@@ -42,6 +42,7 @@ from app.services.retry_worker import RetryWorkerConfig, run_retry_loop
 from app.services.store_factory import build_store
 from app.services.dispatch_service import DispatchService
 from app.services.dispatch_worker import DispatchWorkerPool
+from app.services.task_lifecycle import TaskLifecycleService
 from app.services.pending_execution_worker import PendingExecutionWorkerConfig, run_pending_execution_loop
 from app.services.ws_manager import WsManager
 from app.connectors.registry import register_defaults, list_platforms
@@ -77,6 +78,11 @@ if hasattr(store, "session_factory"):
 ws_manager = WsManager()
 dispatch_service = DispatchService(store.session_factory) if hasattr(store, "session_factory") else None
 worker_pool = DispatchWorkerPool(dispatch_service, ws_manager) if dispatch_service else None
+lifecycle_service = TaskLifecycleService(
+    session_factory=store.session_factory,
+    dispatch_service=dispatch_service,
+    worker_pool=worker_pool,
+) if hasattr(store, "session_factory") and dispatch_service and worker_pool else None
 
 
 def _build_retry_worker_config() -> RetryWorkerConfig:
@@ -123,6 +129,7 @@ async def lifespan(app_instance: FastAPI):
     # Attach singletons to app.state for route access
     app_instance.state.dispatch_service = dispatch_service
     app_instance.state.worker_pool = worker_pool
+    app_instance.state.task_lifecycle_service = lifecycle_service
     app_instance.state.ws_manager = ws_manager
 
     retry_task = None
@@ -155,6 +162,22 @@ async def lifespan(app_instance: FastAPI):
             )
             app_instance.state.pending_execution_task = pending_execution_task
 
+    cleanup_task = None
+    if lifecycle_service is not None:
+        async def _run_cleanup_loop() -> None:
+            while True:
+                try:
+                    lifecycle_service.cleanup_cancelled_tasks()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("Task lifecycle cleanup failed")
+                await asyncio.sleep(60)
+
+        cleanup_task = asyncio.create_task(_run_cleanup_loop(), name="task-lifecycle-cleanup")
+        app_instance.state.task_lifecycle_cleanup_task = cleanup_task
+
     try:
         yield
     finally:
@@ -163,6 +186,14 @@ async def lifespan(app_instance: FastAPI):
             existing_pending_task.cancel()
             try:
                 await existing_pending_task
+            except asyncio.CancelledError:
+                pass
+
+        existing_cleanup_task = getattr(app_instance.state, "task_lifecycle_cleanup_task", None)
+        if existing_cleanup_task is not None:
+            existing_cleanup_task.cancel()
+            try:
+                await existing_cleanup_task
             except asyncio.CancelledError:
                 pass
 
@@ -1010,27 +1041,14 @@ def update_task_board_item(task_id: str, payload: TaskBoardUpdateRequest):
     return item
 
 
-@app.delete("/api/v1/task-board/{task_id}")
-def delete_task_board_item(task_id: str):
-    deleted = store.delete_task_board_item(task_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="task_board_item_not_found")
-    return {"deleted": 1, "task_id": task_id}
-
-
 @app.patch("/api/v1/task-board/{task_id}/archive")
 def archive_task_board_item(task_id: str):
-    """Archive a completed or cancelled task (hide from active board)."""
-    try:
-        item = store.update_task_board_item(task_id, TaskBoardUpdateRequest(archived=True))
-    except ValueError as exc:
-        detail = str(exc)
-        if detail == "can_only_archive_completed_or_cancelled":
-            raise HTTPException(status_code=422, detail=detail) from exc
-        raise
-    if item is None:
+    """Archive a task (any status), cancelling active dispatch if any."""
+    lifecycle: TaskLifecycleService = app.state.task_lifecycle_service
+    ok = lifecycle.archive_task(task_id)
+    if not ok:
         raise HTTPException(status_code=404, detail="task_board_item_not_found")
-    return item
+    return {"archived": 1, "task_id": task_id}
 
 
 @app.patch("/api/v1/task-board/{task_id}/unarchive")

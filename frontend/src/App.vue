@@ -96,7 +96,6 @@ const isTaskBoardCreateModalOpen = ref(false)
 const isTaskBoardEditModalOpen = ref(false)
 const creatingTaskBoardItem = ref(false)
 const updatingTaskBoardItem = ref(false)
-const deletingTaskBoardItemId = ref('')
 const quickUpdatingTaskBoardItemId = ref('')
 const draggingTaskBoardItemId = ref('')
 const taskBoardDetailItem = ref(null)
@@ -189,12 +188,27 @@ async function loadArchivedTasks() {
 }
 
 async function archiveTaskBoardItem(item) {
+  if (!item?.id || archivingTaskId.value) {
+    return
+  }
+  const statusWarning = ['in_progress', 'pending_execution'].includes(item.status)
+    ? '进行中的异步任务将被取消。'
+    : ''
+  const confirmed = window.confirm(`归档任务「${item.name}」？${statusWarning}`)
+  if (!confirmed) {
+    return
+  }
   archivingTaskId.value = item.id
+  errorMessage.value = ''
   try {
     await patchJson(`${apiBase}/api/v1/task-board/${item.id}/archive`, {})
     await loadTaskBoardItems()
-  } catch (err) {
-    console.error('Failed to archive task', err)
+    if (activePage.value === 'task-archive') {
+      await loadArchivedTasks()
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Failed to archive task', error)
   } finally {
     archivingTaskId.value = ''
   }
@@ -1745,26 +1759,6 @@ async function submitEditTaskBoardItem() {
   }
 }
 
-async function deleteTaskBoardItem(item) {
-  if (!item?.id || deletingTaskBoardItemId.value) {
-    return
-  }
-  const confirmed = window.confirm(`确认删除任务「${item.name}」？`)
-  if (!confirmed) {
-    return
-  }
-  deletingTaskBoardItemId.value = item.id
-  errorMessage.value = ''
-  try {
-    await deleteJson(`${apiBase}/api/v1/task-board/${item.id}`)
-    await loadTaskBoardItems()
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
-  } finally {
-    deletingTaskBoardItemId.value = ''
-  }
-}
-
 async function loadGithubRepos() {
   try {
     const data = await fetchJson(`${apiBase}/api/v1/projects/github/repos`)
@@ -2470,8 +2464,7 @@ onUnmounted(() => {
                             <button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(item)">详情</button>
                             <button type="button" class="project-btn project-btn-primary" :disabled="startingConversationFromTask" @click.stop="startConversationFromTask(item)">{{ startingConversationFromTask ? '...' : '会话' }}</button>
                             <button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(item)">编辑</button>
-                            <button v-if="item.status === 'completed' || item.status === 'cancelled'" type="button" class="project-btn project-btn-archive" :disabled="archivingTaskId === item.id" @click.stop="archiveTaskBoardItem(item)">{{ archivingTaskId === item.id ? '...' : '归档' }}</button>
-                            <button type="button" class="card-delete-btn" :disabled="deletingTaskBoardItemId === item.id" :aria-label="`删除任务 ${item.name}`" @click.stop="deleteTaskBoardItem(item)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4h12M5.333 4V2.667a1.333 1.333 0 011.334-1.334h2.666a1.333 1.333 0 011.334 1.334V4m2 0v9.333a1.333 1.333 0 01-1.334 1.334H4.667a1.333 1.333 0 01-1.334-1.334V4h9.334zM6.667 7.333v4M9.333 7.333v4"/></svg></button>
+                            <button type="button" class="card-archive-btn" :disabled="archivingTaskId === item.id" :aria-label="`归档任务 ${item.name}`" @click.stop="archiveTaskBoardItem(item)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11v7.333A1.167 1.167 0 0112.333 14H3.667A1.167 1.167 0 012.5 12.833V5.5z"/><path d="M1.833 3.167h12.334V5.5H1.833zM5.333 8h5.334"/></svg></button>
                           </div>
                         </div>
                         <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
@@ -2497,7 +2490,7 @@ onUnmounted(() => {
                                     <span v-if="child.children.length" class="task-child-count">{{ child.children.length }} 子任务</span>
                                   </div>
                                 </div>
-                                <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(child)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(child)">编辑</button><button v-if="child.status === 'completed' || child.status === 'cancelled'" type="button" class="project-btn project-btn-archive" :disabled="archivingTaskId === child.id" @click.stop="archiveTaskBoardItem(child)">{{ archivingTaskId === child.id ? '...' : '归档' }}</button><button type="button" class="card-delete-btn" :disabled="deletingTaskBoardItemId === child.id" :aria-label="`删除任务 ${child.name}`" @click.stop="deleteTaskBoardItem(child)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4h12M5.333 4V2.667a1.333 1.333 0 011.334-1.334h2.666a1.333 1.333 0 011.334 1.334V4m2 0v9.333a1.333 1.333 0 01-1.334 1.334H4.667a1.333 1.333 0 01-1.334-1.334V4h9.334zM6.667 7.333v4M9.333 7.333v4"/></svg></button></div>
+                                <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(child)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(child)">编辑</button><button type="button" class="card-archive-btn" :disabled="archivingTaskId === child.id" :aria-label="`归档任务 ${child.name}`" @click.stop="archiveTaskBoardItem(child)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11v7.333A1.167 1.167 0 0112.333 14H3.667A1.167 1.167 0 012.5 12.833V5.5z"/><path d="M1.833 3.167h12.334V5.5H1.833zM5.333 8h5.334"/></svg></button></div>
                               </div>
                               <div class="task-board-desc task-board-desc-compact">{{ child.description || '暂无描述' }}</div>
                               <div v-if="requiresTaskStatusReason(child.status) && child.status_reason" class="task-board-status-reason">
@@ -2505,7 +2498,7 @@ onUnmounted(() => {
                               </div>
                               <div v-if="child.children.length && !collapsedTaskNodes.has(child.id)" class="task-tree-children">
                                 <div v-for="grandchild in child.children" :key="grandchild.id" class="task-board-card task-board-card-child task-board-card-grandchild" :class="{ 'task-board-card-highlighted': highlightedTaskBoardItemId === grandchild.id }">
-                                  <div class="task-board-card-top"><div class="task-board-title-wrap"><div class="task-board-name-row"><span class="task-tree-spacer"></span><span class="task-board-name">{{ grandchild.name }}</span></div><div class="task-board-badges"><span class="priority-badge" :class="`priority-P${getTaskPriority(grandchild) - 1}`">{{ KANBAN_PRIORITY_LABELS[getTaskPriority(grandchild)] }}</span></div></div><div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(grandchild)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(grandchild)">编辑</button><button type="button" class="card-delete-btn" :disabled="deletingTaskBoardItemId === grandchild.id" :aria-label="`删除任务 ${grandchild.name}`" @click.stop="deleteTaskBoardItem(grandchild)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4h12M5.333 4V2.667a1.333 1.333 0 011.334-1.334h2.666a1.333 1.333 0 011.334 1.334V4m2 0v9.333a1.333 1.333 0 01-1.334 1.334H4.667a1.333 1.333 0 01-1.334-1.334V4h9.334zM6.667 7.333v4M9.333 7.333v4"/></svg></button></div></div>
+                                  <div class="task-board-card-top"><div class="task-board-title-wrap"><div class="task-board-name-row"><span class="task-tree-spacer"></span><span class="task-board-name">{{ grandchild.name }}</span></div><div class="task-board-badges"><span class="priority-badge" :class="`priority-P${getTaskPriority(grandchild) - 1}`">{{ KANBAN_PRIORITY_LABELS[getTaskPriority(grandchild)] }}</span></div></div><div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="openTaskBoardDetailModal(grandchild)">详情</button><button type="button" class="project-btn" @click.stop="openTaskBoardEditModal(grandchild)">编辑</button><button type="button" class="card-archive-btn" :disabled="archivingTaskId === grandchild.id" :aria-label="`归档任务 ${grandchild.name}`" @click.stop="archiveTaskBoardItem(grandchild)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11v7.333A1.167 1.167 0 0112.333 14H3.667A1.167 1.167 0 012.5 12.833V5.5z"/><path d="M1.833 3.167h12.334V5.5H1.833zM5.333 8h5.334"/></svg></button></div></div>
                                   <div class="task-board-desc task-board-desc-compact">{{ grandchild.description || '暂无描述' }}</div>
                                   <div v-if="requiresTaskStatusReason(grandchild.status) && grandchild.status_reason" class="task-board-status-reason">
                                     原因：{{ getTaskStatusReasonPreview(grandchild) }}
