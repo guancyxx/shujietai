@@ -115,7 +115,7 @@ class TaskLifecycleService:
                 task_board_item = db.get(TaskBoardEntity, item_id)
                 if task_board_item is None or task_board_item.archived:
                     continue
-                if task_board_item.status in {"completed", "blocked"}:
+                if task_board_item.status != "cancelled":
                     continue
                 task_board_item.status = "blocked"
                 task_board_item.status_reason = _CANCELLED_REVIEW_REASON

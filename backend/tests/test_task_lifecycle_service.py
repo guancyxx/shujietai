@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas import TaskBoardCreateRequest
+from app.schemas import TaskBoardCreateRequest, TaskBoardUpdateRequest
 from app.services.dispatch_service import DispatchService
 from app.services.sqlalchemy_store import SqlAlchemySessionStore
 from app.services.task_lifecycle import TaskLifecycleService
@@ -126,3 +126,34 @@ def test_cleanup_cancelled_tasks_marks_linked_task_blocked() -> None:
     updated = [entry for entry in store.list_task_board_items() if entry.status == "blocked"][0]
     assert updated.id == item.id
     assert updated.status_reason == "Dispatch was cancelled; user review is required."
+
+
+def test_cleanup_cancelled_tasks_does_not_reblock_task_after_user_moves_it_back_to_draft() -> None:
+    store, dispatch_service, _worker_pool, lifecycle = _make_services()
+    item = store.create_task_board_item(
+        TaskBoardCreateRequest(
+            name="Recovered task",
+            description="User should be able to recover it.",
+            status="cancelled",
+            status_reason="Initial cancellation.",
+        )
+    )
+    task = dispatch_service.create_task_for_task_board_item(str(item.id))
+    assert task is not None
+    dispatch_service.transition_task(task.id, "running")
+    dispatch_service.cancel_task(task.id)
+
+    assert lifecycle.cleanup_cancelled_tasks() == 1
+    blocked = store.update_task_board_item(
+        str(item.id),
+        TaskBoardUpdateRequest(status="draft"),
+    )
+    assert blocked is not None
+    assert blocked.status == "draft"
+    assert blocked.status_reason == ""
+
+    assert lifecycle.cleanup_cancelled_tasks() == 0
+    recovered = store.list_task_board_items()[0]
+    assert recovered.id == item.id
+    assert recovered.status == "draft"
+    assert recovered.status_reason == ""

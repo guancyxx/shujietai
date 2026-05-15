@@ -34,6 +34,14 @@ healing mechanism. Only two terminal states should exist long-term:
 - **completed** — task achieved its goal
 - **blocked** — task needs user clarification (human input required)
 
+### Problem 3b: Cleanup overrides explicit user recovery
+The cleanup loop must be idempotent and must not override a user's later
+status correction. If a cancelled dispatch already moved a task-board item
+to `blocked`, and a user moves that item back to `draft`, subsequent cleanup
+runs must treat that manual status change as the newer source of truth.
+Historical cancelled dispatch rows must not push the item back into
+`blocked`.
+
 ### Problem 4: UI uses × button suggesting deletion
 The red `×` button for task-board cards implies permanent deletion. Users
 already have `archive` for completed/cancelled tasks. All removal should be
@@ -145,8 +153,9 @@ clarification needed). The cleanup loop enforces this.
 - Call `worker_pool.start_task()` only when safe
 
 ### T4: Implement cleanup_cancelled_tasks background loop
-- Query `dispatch_tasks WHERE status = 'cancelled' AND updated_at < now() - threshold`
-- For each: verify task_board_item reflects cancelled status
+- Query `dispatch_tasks WHERE status = 'cancelled'`
+- For each: only reconcile when the linked task_board_item is still `cancelled`
+- Never override later user status changes such as `blocked` -> `draft`
 - Log counts; do not auto-retry (user decision required)
 - Run every 60s in FastAPI lifespan as asyncio background task
 
@@ -180,9 +189,10 @@ clarification needed). The cleanup loop enforces this.
 1. Clicking archive on a running task cancels its dispatch worker within 1 second
 2. No duplicate dispatch tasks can be created for the same task_board_item while one is active
 3. Cancelled dispatch tasks are logged and tracked by the cleanup loop
-4. No `DELETE /api/v1/task-board/{id}` endpoint remains
-5. Frontend shows archive icon instead of × for all task states
-6. Archive confirm dialog reflects cancellation warning when task is in progress
+4. Cleanup is idempotent: after a user moves a previously blocked item back to draft, old cancelled dispatch rows do not block it again
+5. No `DELETE /api/v1/task-board/{id}` endpoint remains
+6. Frontend shows archive icon instead of × for all task states
+7. Archive confirm dialog reflects cancellation warning when task is in progress
 
 ## Open Questions
 
