@@ -7,6 +7,7 @@ import {
   KANBAN_STATUSES, COLLAPSIBLE_KANBAN_STATUSES, KANBAN_PRIORITY_LABELS,
 } from '../constants/appConstants.js'
 import { useSessionStore } from './useSessionStore.js'
+import { useProjectStore } from './useProjectStore.js'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 
@@ -78,8 +79,8 @@ export const useTaskStore = defineStore('task', () => {
   })
 
   const taskBoardProjectOptions = computed(() => {
-    const ss = useSessionStore()
-    const projects = ss?.projects ?? []
+    const ps = useProjectStore()
+    const projects = ps?.projects ?? []
     return [{ value: '', label: '全部项目' }, ...projects.map(p => ({ value: p.id, label: `${p.name}（${p.code}）` }))]
   })
 
