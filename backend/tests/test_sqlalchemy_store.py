@@ -233,3 +233,48 @@ def test_task_board_status_reason_validation_and_clear() -> None:
     )
     assert resumed is not None
     assert resumed.status_reason == ""
+
+
+def test_normalize_platform_default_and_edge_cases() -> None:
+    from app.schemas import normalize_platform
+
+    assert normalize_platform("hermes") == "hermes"
+    assert normalize_platform("Hermes") == "hermes"
+    assert normalize_platform("  hermes  ") == "hermes"
+    assert normalize_platform("none") == "hermes"
+    assert normalize_platform("NONE") == "hermes"
+    assert normalize_platform("") == "hermes"
+    assert normalize_platform("   ") == "hermes"
+
+
+def test_create_task_board_item_platform_default() -> None:
+    """When ai_platform is omitted, persisted value must be 'hermes'."""
+    store = SqlAlchemySessionStore("sqlite+pysqlite:///:memory:")
+    created = store.create_task_board_item(
+        TaskBoardCreateRequest(name="Platform Default Test")
+    )
+    assert created.ai_platform == "hermes"
+
+
+def test_create_task_board_item_rejects_none_platform() -> None:
+    """When ai_platform='none' is sent, Pydantic validation rejects it with ValueError."""
+    import pytest
+
+    with pytest.raises(ValueError, match="invalid ai_platform"):
+        TaskBoardCreateRequest(name="Bad Platform", ai_platform="none")
+
+
+def test_update_task_board_item_normalizes_platform() -> None:
+    """When updating ai_platform to 'hermes', store normalizes correctly."""
+    store = SqlAlchemySessionStore("sqlite+pysqlite:///:memory:")
+    created = store.create_task_board_item(
+        TaskBoardCreateRequest(name="Update Platform Test", ai_platform="hermes")
+    )
+    assert created.ai_platform == "hermes"
+
+    updated = store.update_task_board_item(
+        str(created.id),
+        TaskBoardUpdateRequest(ai_platform="hermes"),
+    )
+    assert updated is not None
+    assert updated.ai_platform == "hermes"
