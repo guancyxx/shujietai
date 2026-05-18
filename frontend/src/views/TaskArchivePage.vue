@@ -28,6 +28,10 @@ const ts = useTaskStore()
       <div v-else class="archive-list scrollbar-themed">
         <div v-for="item in ts.archivedTaskItems" :key="item.id" class="task-board-card">
           <div class="task-board-card-top">
+            <div class="task-board-card-actions">
+              <button type="button" class="project-btn" @click.stop="ts.archiveDetailItem = item; ts.isArchiveDetailOpen = true">详情</button>
+              <button type="button" class="project-btn project-btn-primary" :disabled="ts.unarchivingTaskId === item.id" @click.stop="ts.unarchiveTaskBoardItem(item)">{{ ts.unarchivingTaskId === item.id ? '...' : '恢复' }}</button>
+            </div>
             <div class="task-board-title-wrap">
               <div class="task-board-name-row">
                 <span class="task-board-name">{{ item.name }}</span>
@@ -37,10 +41,6 @@ const ts = useTaskStore()
                 <span class="task-status-tag" :class="`task-status-${item.status}`">{{ ts.taskBoardStatusLabelMap[item.status] }}</span>
                 <span v-if="item.project_name" class="task-board-meta-label muted">{{ item.project_name }}</span>
               </div>
-            </div>
-            <div class="task-board-card-actions">
-              <button type="button" class="project-btn" @click.stop="ts.archiveDetailItem = item; ts.isArchiveDetailOpen = true">详情</button>
-              <button type="button" class="project-btn project-btn-primary" :disabled="ts.unarchivingTaskId === item.id" @click.stop="ts.unarchiveTaskBoardItem(item)">{{ ts.unarchivingTaskId === item.id ? '...' : '恢复' }}</button>
             </div>
           </div>
           <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
