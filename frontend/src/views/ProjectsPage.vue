@@ -1,13 +1,21 @@
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useProjectStore } from '../stores/useProjectStore.js'
+import { useTaskStore } from '../stores/useTaskStore.js'
 
-const emit = defineEmits(['openTaskBoard'])
+const router = useRouter()
 const ps = useProjectStore()
+const ts = useTaskStore()
 const activeProjectTab = ref('')
 
 function toggleProjectTab(id) {
   activeProjectTab.value = activeProjectTab.value === id ? '' : id
+}
+
+function openTaskBoard(project) {
+  ts.openTaskBoardByProject(project)
+  router.push('/task-board')
 }
 </script>
 
@@ -39,7 +47,7 @@ function toggleProjectTab(id) {
           <div v-if="activeProjectTab === item.id" class="project-card-actions">
             <button type="button" class="project-btn" @click="ps.openProjectEditModal(item)">编辑</button>
             <button type="button" class="project-btn" @click="ps.deleteProject(item)">删除</button>
-            <button type="button" class="project-btn project-btn-primary" @click="emit('openTaskBoard', item)">任务看板</button>
+            <button type="button" class="project-btn project-btn-primary" @click="openTaskBoard(item)">任务看板</button>
           </div>
         </div>
       </div>

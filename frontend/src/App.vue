@@ -1,18 +1,10 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useSessionStore } from './stores/useSessionStore.js'
 import { useTaskStore } from './stores/useTaskStore.js'
 import { useProjectStore } from './stores/useProjectStore.js'
 import { useConfigStore } from './stores/useConfigStore.js'
-
-import ChatPage from './views/ChatPage.vue'
-import ProjectsPage from './views/ProjectsPage.vue'
-import TaskBoardPage from './views/TaskBoardPage.vue'
-import TaskArchivePage from './views/TaskArchivePage.vue'
-import ModelConfigPage from './views/ModelConfigPage.vue'
-import SystemConfigPage from './views/SystemConfigPage.vue'
-import DispatchHistoryPage from './views/DispatchHistoryPage.vue'
-import SkillsCatalogPage from './views/SkillsCatalogPage.vue'
 
 import CreateConversationModal from './components/modals/CreateConversationModal.vue'
 import ProjectCreateModal from './components/modals/ProjectCreateModal.vue'
@@ -23,19 +15,23 @@ import McpModal from './components/modals/McpModal.vue'
 import TaskBoardCreateModal from './components/modals/TaskBoardCreateModal.vue'
 import TaskBoardEditModal from './components/modals/TaskBoardEditModal.vue'
 
+const router = useRouter()
+const route = useRoute()
+
 const ss = useSessionStore()
 const ts = useTaskStore()
 const ps = useProjectStore()
 const cs = useConfigStore()
 
-const activePage = ref('chat')
+function switchToTaskArchive() {
+  router.push('/task-archive')
+  ts.loadArchivedTasks()
+}
 
-function switchToTaskArchive() { activePage.value = 'task-archive'; ts.loadArchivedTasks() }
-function switchToSystemConfig() { activePage.value = 'system-config' }
-function switchToDispatchHistory() { activePage.value = 'dispatch-history' }
-function switchToSkillsCatalog() { activePage.value = 'skills-catalog' }
-
-function openTaskBoardByProject(project) { ts.openTaskBoardByProject(project); activePage.value = 'task-board' }
+function openTaskBoardByProject(_project) {
+  ts.openTaskBoardByProject(_project)
+  router.push('/task-board')
+}
 
 onMounted(async () => {
   ss.wsConnect()
@@ -50,8 +46,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => { ss.clearActiveTask() })
-
-defineExpose({ activePage })
 </script>
 
 <template>
@@ -69,51 +63,44 @@ defineExpose({ activePage })
         </div>
 
         <nav class="top-nav" aria-label="页面切换">
-          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'chat' }" @click="activePage = 'chat'">
+          <router-link to="/" class="top-nav-btn" :class="{ 'top-nav-btn-active': route.name === 'chat' }">
             <span class="top-nav-btn-icon" aria-hidden="true">💬</span>
             <span class="top-nav-btn-label">会话中心</span>
-          </button>
-          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'projects' }" @click="activePage = 'projects'">
+          </router-link>
+          <router-link to="/projects" class="top-nav-btn" :class="{ 'top-nav-btn-active': route.name === 'projects' }">
             <span class="top-nav-btn-icon" aria-hidden="true">📁</span>
             <span class="top-nav-btn-label">项目管理</span>
-          </button>
-          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'task-board' }" @click="activePage = 'task-board'">
+          </router-link>
+          <router-link to="/task-board" class="top-nav-btn" :class="{ 'top-nav-btn-active': route.name === 'task-board' }">
             <span class="top-nav-btn-icon" aria-hidden="true">🗂️</span>
             <span class="top-nav-btn-label">任务看板</span>
-          </button>
-          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'task-archive' }" @click="switchToTaskArchive">
+          </router-link>
+          <router-link to="/task-archive" class="top-nav-btn" :class="{ 'top-nav-btn-active': route.name === 'task-archive' }" @click="switchToTaskArchive">
             <span class="top-nav-btn-icon" aria-hidden="true">📦</span>
             <span class="top-nav-btn-label">归档任务</span>
-          </button>
-          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'model-config' }" @click="activePage = 'model-config'">
+          </router-link>
+          <router-link to="/model-config" class="top-nav-btn" :class="{ 'top-nav-btn-active': route.name === 'model-config' }">
             <span class="top-nav-btn-icon" aria-hidden="true">🤖</span>
             <span class="top-nav-btn-label">模型配置</span>
-          </button>
-          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'skills-catalog' }" @click="switchToSkillsCatalog">
+          </router-link>
+          <router-link to="/skills-catalog" class="top-nav-btn" :class="{ 'top-nav-btn-active': route.name === 'skills-catalog' }">
             <span class="top-nav-btn-icon" aria-hidden="true">🧩</span>
             <span class="top-nav-btn-label">Skills 库</span>
-          </button>
-          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'system-config' }" @click="switchToSystemConfig">
+          </router-link>
+          <router-link to="/system-config" class="top-nav-btn" :class="{ 'top-nav-btn-active': route.name === 'system-config' }">
             <span class="top-nav-btn-icon" aria-hidden="true">⚙️</span>
             <span class="top-nav-btn-label">系统配置</span>
-          </button>
-          <button type="button" class="top-nav-btn" :class="{ 'top-nav-btn-active': activePage === 'dispatch-history' }" @click="switchToDispatchHistory">
+          </router-link>
+          <router-link to="/dispatch-history" class="top-nav-btn" :class="{ 'top-nav-btn-active': route.name === 'dispatch-history' }">
             <span class="top-nav-btn-icon" aria-hidden="true">📋</span>
             <span class="top-nav-btn-label">调度历史</span>
-          </button>
+          </router-link>
         </nav>
       </header>
 
       <div v-if="ss.errorMessage" class="error panel">{{ ss.errorMessage }}</div>
 
-      <ChatPage v-if="activePage === 'chat'" />
-      <ProjectsPage v-else-if="activePage === 'projects'" @openTaskBoard="openTaskBoardByProject" />
-      <TaskBoardPage v-else-if="activePage === 'task-board'" />
-      <TaskArchivePage v-else-if="activePage === 'task-archive'" />
-      <ModelConfigPage v-else-if="activePage === 'model-config'" />
-      <SystemConfigPage v-else-if="activePage === 'system-config'" />
-      <DispatchHistoryPage v-else-if="activePage === 'dispatch-history'" />
-      <SkillsCatalogPage v-else-if="activePage === 'skills-catalog'" />
+      <router-view />
     </section>
 
     <!-- Global modals -->
