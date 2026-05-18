@@ -12,36 +12,23 @@ defineExpose({ timelineScrollRef })
 </script>
 
 <template>
-  <div class="chat-composer">
-    <aside class="cockpit-status cockpit-status-inline">
-      <div class="cpi-status" :class="`status-${ss.conversationLatestStatus.tone}`">
-        <span class="cpi-status-dot" aria-hidden="true"></span>
-        <span class="cpi-status-text">{{ ss.conversationLatestStatus.text }}</span>
-        <span class="cpi-status-time">{{ ss.conversationLatestStatus.time }}</span>
-      </div>
-    </aside>
-
-    <div v-if="ss.dispatchIsResumable" class="dispatch-composer-hint">
-      需要你的输入以继续任务。输入回复后按 Enter 发送。
+  <form class="chat-composer" @submit.prevent="ss.sendMessageToHermes">
+    <div class="conversation-latest-status" :class="`status-${ss.conversationLatestStatus.tone}`">
+      <span class="latest-status-label">会话状态</span>
+      <span class="latest-status-text">{{ ss.conversationLatestStatus.text }}</span>
+      <span class="latest-status-time">{{ ss.conversationLatestStatus.time }}</span>
     </div>
 
-    <div class="chat-composer-input-row">
-      <textarea
-        v-model="ss.composerText"
-        class="chat-composer-textarea"
-        placeholder="输入消息，按 Enter 发送..."
-        rows="2"
-        :disabled="ss.sending"
-        @keydown="ss.handleComposerKeydown"
-      ></textarea>
-      <button
-        type="button"
-        class="chat-composer-send-btn"
-        :disabled="ss.sending || !ss.composerText.trim()"
-        @click="ss.sendMessageToHermes"
-      >
-        {{ ss.sending ? '发送中...' : '发送' }}
-      </button>
-    </div>
-  </div>
+    <textarea
+      v-model="ss.composerText"
+      class="composer-input"
+      :disabled="ss.sending"
+      :placeholder="ss.dispatchIsRunning ? '输入修正内容，将打断当前 AI 回复并重新发送' : (ss.dispatchAwaitingInput ? 'AI 正在等待你的回复...' : '输入消息，直接与 AI 对话')"
+      @keydown="ss.handleComposerKeydown"
+    ></textarea>
+
+    <button class="composer-send" type="submit" :disabled="ss.sending || !ss.composerText.trim()">
+      {{ ss.sending ? '处理中...' : (ss.dispatchIsRunning ? '打断并发送' : '发送') }}
+    </button>
+  </form>
 </template>
