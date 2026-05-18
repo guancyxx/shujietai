@@ -336,6 +336,7 @@ export const useSessionStore = defineStore('session', () => {
         composerText.value = ''
         await resumeDispatchTask(trimmed)
       } else {
+        const hadTaskContext = !!dispatchTaskId.value && dispatchTaskEvents.value.length > 0
         if (dispatchActiveTask.value && isTerminalDispatchStatus(dispatchActiveTask.value.status)) clearActiveTask()
         if (!dispatchTaskId.value) {
           composerText.value = ''
@@ -345,6 +346,7 @@ export const useSessionStore = defineStore('session', () => {
             initialPrompt: trimmed,
             model: '', skills: [], mcpServers: [],
             externalSessionId: selectedExternalSessionId.value || null,
+            preserveExistingEvents: hadTaskContext,
           })
           isBlankChatMode.value = false
         }

@@ -112,10 +112,12 @@ function handleTaskEvent(data) {
 
   taskEvents.value.push(incomingEvent)
   taskEvents.value.sort((a, b) => {
+    const ta = new Date(a.created_at).getTime()
+    const tb = new Date(b.created_at).getTime()
+    if (ta !== tb) return ta - tb
     const seqA = Number.isFinite(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
     const seqB = Number.isFinite(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
-    if (seqA !== seqB) return seqA - seqB
-    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    return seqA - seqB
   })
 }
 
@@ -161,10 +163,13 @@ async function createDispatchTask({
   mcpServers = [],
   taskBoardItemId = null,
   externalSessionId = null,
+  preserveExistingEvents = false,
 }) {
   taskLoading.value = true
   taskError.value = ''
-  taskEvents.value = []
+  if (!preserveExistingEvents) {
+    taskEvents.value = []
+  }
 
   try {
     // Ensure WebSocket is connected
@@ -202,7 +207,9 @@ async function createDispatchTask({
 
     // Immediately fetch any events that were generated before WebSocket subscription
     // (race condition: worker may have already started streaming)
-    taskEvents.value = []
+    if (!preserveExistingEvents) {
+      taskEvents.value = []
+    }
     try {
       const eventsData = await fetchJson(`${apiBase}/api/v1/dispatch/${task.id}/events`)
       const items = eventsData.items || eventsData || []
