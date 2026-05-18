@@ -1,6 +1,5 @@
 import { createApp } from 'vue'
 import App from './App.vue'
-import router from './router'
 
 import './styles/base.css'
 import './styles/shell.css'
@@ -14,5 +13,4 @@ import './styles/task-board-matrix.css'
 import './styles/responsive.css'
 
 const app = createApp(App)
-app.use(router)
 app.mount('#app')
