@@ -265,16 +265,18 @@ def test_create_task_board_item_rejects_none_platform() -> None:
 
 
 def test_update_task_board_item_normalizes_platform() -> None:
-    """When updating ai_platform to 'hermes', store normalizes correctly."""
+    """Store normalizes non-canonical ai_platform values during updates."""
     store = SqlAlchemySessionStore("sqlite+pysqlite:///:memory:")
     created = store.create_task_board_item(
         TaskBoardCreateRequest(name="Update Platform Test", ai_platform="hermes")
     )
     assert created.ai_platform == "hermes"
 
+    update_request = TaskBoardUpdateRequest.model_construct(ai_platform=" NONE ")
+
     updated = store.update_task_board_item(
         str(created.id),
-        TaskBoardUpdateRequest(ai_platform="hermes"),
+        update_request,
     )
     assert updated is not None
     assert updated.ai_platform == "hermes"
