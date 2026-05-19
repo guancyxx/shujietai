@@ -9,6 +9,7 @@ import {
 } from '../constants/appConstants.js'
 import { useSessionStore } from './useSessionStore.js'
 import { useProjectStore } from './useProjectStore.js'
+import { buildTaskTree, countTaskTreeNodes, getTaskPriority, makeTaskNodeKey } from '../services/taskBoardTree.js'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 
@@ -123,25 +124,6 @@ export const useTaskStore = defineStore('task', () => {
   const kanbanMatrixStyle = computed(() => ({ '--kanban-grid-template': kanbanGridTemplate.value, '--kanban-matrix-min-width': kanbanMatrixMinWidth.value }))
 
   // --- Helpers ---
-  function buildTaskTree(items) {
-    if (!Array.isArray(items) || items.length === 0) return []
-    const map = new Map(items.map(i => [i.id, { ...i, children: [] }]))
-    const roots = []
-    for (const node of map.values()) {
-      if (node.parent_task_id && map.has(node.parent_task_id)) {
-        map.get(node.parent_task_id).children.push(node)
-      } else { roots.push(node) }
-    }
-    return roots
-  }
-  function makeTaskNodeKey(item) { return item?.id || '' }
-  function countTaskTreeNodes(nodes) {
-    let c = 0
-    const walk = ns => { for (const n of ns) { c++; walk(n.children) } }
-    walk(nodes)
-    return c
-  }
-
   function findTaskBoardItemById(id) {
     if (!id) return null
     return taskBoardItems.value.find(i => i.id === id) || null
@@ -170,7 +152,6 @@ export const useTaskStore = defineStore('task', () => {
     collapsedTaskNodes.value = s
   }
 
-  function getTaskPriority(item) { return item?.priority ?? 3 }
   function taskBoardStatusClass(s) { return `task-status-${s || 'draft'}` }
   function taskBoardDetailField(v) { const n = String(v || '').trim(); return n || '-' }
   function requiresTaskStatusReason(s) { return s === 'blocked' || s === 'cancelled' }
