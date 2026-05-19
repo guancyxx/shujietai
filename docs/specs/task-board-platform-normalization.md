@@ -88,9 +88,16 @@ assert d.get('ai_platform')=='hermes', f'FAIL: {d.get(\"ai_platform\")}'
 print('PASS: default=hermes')"
 
 # Test none rejection
-curl -s -X POST http://localhost:18000/api/v1/task-board \
+response=$(curl -s -o /tmp/task-board-none-response.json -w '%{http_code}' \
+  -X POST http://localhost:18000/api/v1/task-board \
   -H 'Content-Type: application/json' \
-  -d '{"name":"test","ai_platform":"none"}' -w '%{http_code}'
+  -d '{"name":"test","ai_platform":"none"}') && \
+python3 -c "
+import pathlib, sys
+status = sys.argv[1]
+body = pathlib.Path('/tmp/task-board-none-response.json').read_text()
+assert status == '422', f'FAIL: expected 422, got {status}. body={body}'
+print('PASS: none rejected with 422')" "$response"
 
 # Run backend tests
 docker exec shujietai-backend python -m pytest tests/test_sqlalchemy_store.py -v
