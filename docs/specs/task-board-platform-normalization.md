@@ -95,6 +95,8 @@ curl -s -X POST http://localhost:18000/api/v1/task-board \
   -w '\n%{http_code}' | python3 -c "
 import sys
 payload = sys.stdin.read().rstrip('\n')
+if '\n' not in payload:
+    raise AssertionError(f'FAIL: unexpected curl output format: {payload!r}')
 body, status = payload.rsplit('\n', 1)
 assert status == '422', f'FAIL: expected 422, got {status}. body={body}'
 print('PASS: none rejected with 422')"
