@@ -27,7 +27,7 @@ Ensure every task-board item and dispatch task has a valid, executable `ai_platf
 
 - Create modal: `<select>` with single `<option value="hermes">hermes</option>`. No `none` option exposed.
 - Edit modal: same single-option select.
-- Store state: both `taskBoardCreateForm` and `taskBoardEditForm` default `ai_platform` to `'hermes'`. Reset clears back to `'hermes'`.
+- Store state: `taskBoardCreateForm` defaults `ai_platform` to `'hermes'`, and `resetTaskBoardCreateForm()` clears it back to `'hermes'`. `taskBoardEditForm` also uses `'hermes'` as its default/populated platform value, but there is no corresponding edit-form reset on close; closing the edit modal clears only the edit id and leaves edit form state until the next open.
 - `openTaskBoardEditModal()`: if loaded item has `ai_platform=none` or falsy, normalizes to `'hermes'` before populating the form.
 - `startConversationFromTask()`: treats `none` as `hermes` when starting dispatch.
 - `buildTaskSystemPrompt()`: treats `none` as `hermes` in the system prompt.
