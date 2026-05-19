@@ -92,8 +92,12 @@ class ChunkContext:
     cancelled: bool = False
 
 
-# A chunk handler receives the raw chunk dict and the mutable ChunkContext.
-ChunkHandler = Callable[..., Coroutine[Any, Any, None]]
+# A chunk handler in the registry is an unbound TaskWorker method:
+# (self, chunk, ctx) -> Coroutine[None].
+ChunkHandler = Callable[
+    ["TaskWorker", dict[str, Any], ChunkContext],
+    Coroutine[Any, Any, None],
+]
 
 
 class TaskWorker:
