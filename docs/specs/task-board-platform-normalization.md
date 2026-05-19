@@ -21,14 +21,21 @@ Ensure every task-board item and dispatch task has a valid, executable `ai_platf
 
 1. Schema validation (`TaskBoardCreateRequest.check_ai_platform`): rejects anything not in `VALID_AI_PLATFORMS` at the API boundary with HTTP 422.
 2. Schema default: `ai_platform: str = Field(default="hermes", ...)` — when omitted, Pydantic fills in `"hermes"` before validation runs.
-3. Store normalization (`normalize_platform`): called in `create_task_board_item` and `update_task_board_item`. Maps `none`/empty to `hermes` as idempotent safety net for store-mediated writes (including migration/backfill scripts that use store APIs). Direct DB writes bypass this layer and are not allowed in normal operations; if emergency SQL is used, run the migration/audit normalization checks before and after the write.
+3. Store normalization (`normalize_platform`): called in `create_task_board_item` and
+   `update_task_board_item`. Maps `none`/empty to `hermes` as idempotent safety net for
+   store-mediated writes (including migration/backfill scripts that use store APIs). Direct DB
+   writes bypass this layer and are not allowed in normal operations; if emergency SQL is used,
+   run the migration/audit normalization checks before and after the write.
 
 ### Frontend
 
 - Create modal: `<select>` with single `<option value="hermes">hermes</option>`. No `none` option exposed.
 - Edit modal: same single-option select.
 - Store state (create): `taskBoardCreateForm` defaults `ai_platform` to `'hermes'`, and `resetTaskBoardCreateForm()` clears it back to `'hermes'`.
-- Store state (edit): `taskBoardEditForm` also uses `'hermes'` as its default/populated platform value, but there is no corresponding edit-form reset on close; closing the edit modal clears only the edit id and leaves edit form state until the next open (current implementation/known limitation).
+- Store state (edit): `taskBoardEditForm` also uses `'hermes'` as its default/populated platform
+  value, but there is no corresponding edit-form reset on close.
+- Edit modal close behavior: closing the edit modal clears only the edit id and leaves edit form
+  state until the next open (current implementation/known limitation).
 - `openTaskBoardEditModal()`: if loaded item has `ai_platform=none` or falsy, normalizes to `'hermes'` before populating the form.
 - `startConversationFromTask()`: treats `none` as `hermes` when starting dispatch.
 - `buildTaskSystemPrompt()`: treats `none` as `hermes` in the system prompt.
