@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { fetchJson, postJson, patchJson } from '../services/apiClient.js'
 import {
   TASK_BOARD_STATUS_OPTIONS, TASK_BOARD_STATUS_LABEL_MAP,
@@ -267,6 +268,7 @@ export const useTaskStore = defineStore('task', () => {
 
   async function selectExistingDispatchSession(task, dispatchTask) {
     const ss = useSessionStore()
+    const router = useRouter()
     const esid = dispatchTask.external_session_id || dispatchTask.id
     await ss.loadSessions()
     const safePlat = (v) => { const v2 = (v || '').trim().toLowerCase(); return v2 === 'none' || !v2 ? 'hermes' : v2 }
@@ -278,19 +280,29 @@ export const useTaskStore = defineStore('task', () => {
       ss.selectedExternalSessionId = esid
     }
     await ss.restoreActiveDispatchTask()
+    router.push({ name: 'chat' })
   }
 
   async function startConversationFromTask(task) {
     if (startingConversationFromTask.value) return
     startingConversationFromTask.value = true
     const ss = useSessionStore()
+    const router = useRouter()
     ss.errorMessage = ''
     try {
       let resolved = null
       try { resolved = await fetchJson(`${apiBase}/api/v1/dispatch/task-board/${encodeURIComponent(task.id)}/work-session`) } catch {}
       const action = resolved?.recommended_action || 'create_new'
-      if (action === 'resume' && resolved?.active_dispatch_task) { await selectExistingDispatchSession(task, resolved.active_dispatch_task); return }
-      if (action === 'view_history' && resolved?.latest_dispatch_task) { await selectExistingDispatchSession(task, resolved.latest_dispatch_task); return }
+      if (action === 'resume' && resolved?.active_dispatch_task) {
+        await selectExistingDispatchSession(task, resolved.active_dispatch_task)
+        router.push({ name: 'chat' })
+        return
+      }
+      if (action === 'view_history' && resolved?.latest_dispatch_task) {
+        await selectExistingDispatchSession(task, resolved.latest_dispatch_task)
+        router.push({ name: 'chat' })
+        return
+      }
       const projectCtx = resolveTaskProjectContext(task)
       const sysPrompt = buildTaskSystemPrompt(task, projectCtx)
       const platform = (task.ai_platform || '').trim().toLowerCase() === 'none' ? 'hermes' : task.ai_platform
@@ -315,6 +327,7 @@ export const useTaskStore = defineStore('task', () => {
       })
       await ss.loadSessions()
       ss.selectedSessionId = ss.sessions.find(s => s.platform === platform && s.external_session_id === esid)?.id || ss.selectedSessionId
+      router.push({ name: 'chat' })
     } catch (error) {
       ss.errorMessage = error instanceof Error ? error.message : 'Unknown error'
     } finally {
@@ -369,7 +382,10 @@ export const useTaskStore = defineStore('task', () => {
       taskBoardItems.value = taskBoardItems.value.map(e => e.id === item.id ? updated : e)
       if (taskBoardDetailItem.value?.id === item.id) taskBoardDetailItem.value = updated
     } catch (e) {
-      useSessionStore().errorMessage = e instanceof Error ? e.message : 'Unknown error'
+      const msg = e instanceof Error ? e.message : 'Unknown error'
+      useSessionStore().errorMessage = msg
+      // Reload items to reset any optimistic UI changes
+      await loadTaskBoardItems()
     } finally { quickUpdatingTaskBoardItemId.value = '' }
   }
 
