@@ -83,13 +83,11 @@ class ChunkContext:
     """Mutable context shared across chunk handlers during one streaming call.
 
     Handler methods receive this as their second argument and can mutate
-    ``full_content`` and ``tool_calls_in_flight``.  The ``cancelled`` flag is
-    also exposed so handlers can optionally check it before expensive work.
+    ``full_content`` and ``tool_calls_in_flight``.
     """
 
     full_content: str = ""
     tool_calls_in_flight: dict[str, dict[str, Any]] = field(default_factory=dict)
-    cancelled: bool = False
 
 
 # A chunk handler in the registry is an unbound TaskWorker method:
@@ -112,7 +110,6 @@ class TaskWorker:
         self._task = task
         self._svc = dispatch_service
         self._ws = ws_manager
-        self._cancelled = False
         self._interrupted = False
         self._interrupt_msg = ""
         self._tool_calls_in_flight: dict[str, dict[str, Any]] = {}
@@ -480,18 +477,13 @@ class TaskWorker:
         ctx = ChunkContext(
             full_content="",
             tool_calls_in_flight=self._tool_calls_in_flight,
-            cancelled=self._cancelled,
         )
 
         # Stream from the connector and dispatch via handler registry
         async for chunk in connector.stream_completion(messages, config):
-            if self._cancelled:
-                return
-
             chunk_type = chunk.get("type")
             handler = self._chunk_handlers.get(chunk_type)
             if handler is not None:
-                ctx.cancelled = self._cancelled
                 await handler(self, chunk, ctx)
 
         # Store the complete assistant message in dispatch events.

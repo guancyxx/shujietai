@@ -28,28 +28,34 @@ A `ChunkHandler` protocol and a registry dict keyed by chunk type. The `_execute
 async for chunk in connector.stream_completion(...):
     handler = self._chunk_handlers.get(chunk_type)
     if handler:
-        await handler(chunk, ctx)
+        await handler(self, chunk, ctx)
 ```
 
-Where `ctx` is a lightweight dataclass holding the shared mutable state needed by handlers (`full_content`, `tool_calls_in_flight`, `cancelled` flag).
+Where `ctx` is a lightweight dataclass holding the shared mutable state needed by handlers (`full_content`, `tool_calls_in_flight`).
 
 ### Handler Signature
 
+Handlers are unbound `TaskWorker` methods stored in the registry:
+
 ```python
-ChunkHandler = Callable[[dict[str, Any], ChunkContext], Coroutine[Any, Any, None]]
+ChunkHandler = Callable[
+    ["TaskWorker", dict[str, Any], ChunkContext],
+    Coroutine[Any, Any, None],
+]
 ```
+
+Called as: `await handler(self, chunk, ctx)`
 
 ### ChunkContext
 
 ```python
 @dataclass
 class ChunkContext:
-    full_content: str              # mutable accumulator
-    tool_calls_in_flight: dict     # shared in-flight tool state
-    cancelled: bool                # read by handlers to early-exit
-    task: DispatchTaskItem          # read-only task metadata
-    emit_event: Callable           # self._emit_event bound method
+    full_content: str = ""                                      # mutable accumulator
+    tool_calls_in_flight: dict[str, dict[str, Any]] = field(default_factory=dict)  # shared in-flight tool state
 ```
+
+Handlers access `self._task` and `self._emit_event()` directly via the `self` parameter.
 
 ## Design Decisions
 
@@ -76,18 +82,17 @@ class ChunkContext:
     """Mutable context shared across chunk handlers during one streaming call."""
     full_content: str = ""
     tool_calls_in_flight: dict[str, dict[str, Any]] = field(default_factory=dict)
-    cancelled: bool = False
 ```
 
 ### New handler methods (extracted from if/elif branches)
 
-- `_handle_content(chunk, ctx)` — content/content_delta
-- `_handle_tool_call(chunk, ctx)` — tool_call streaming
-- `_handle_finish(chunk, ctx)` — finish
-- `_handle_tool_start(chunk, ctx)` — tool_start
-- `_handle_tool_complete(chunk, ctx)` — tool_complete
-- `_handle_agent_thinking(chunk, ctx)` — agent_thinking
-- `_handle_error(chunk, ctx)` — error
+- `_handle_content(self, chunk, ctx)` — content/content_delta
+- `_handle_tool_call(self, chunk, ctx)` — tool_call streaming
+- `_handle_finish(self, chunk, ctx)` — finish
+- `_handle_tool_start(self, chunk, ctx)` — tool_start
+- `_handle_tool_complete(self, chunk, ctx)` — tool_complete
+- `_handle_agent_thinking(self, chunk, ctx)` — agent_thinking
+- `_handle_error(self, chunk, ctx)` — error
 
 ### Modified _execute_ai_call
 
@@ -96,18 +101,13 @@ The if/elif chain (lines 261-416) becomes:
 ```python
 ctx = ChunkContext(
     tool_calls_in_flight=self._tool_calls_in_flight,
-    cancelled=self._cancelled,
 )
 
 async for chunk in connector.stream_completion(messages, config):
-    if self._cancelled:
-        return
-    
     chunk_type = chunk.get("type")
     handler = self._chunk_handlers.get(chunk_type)
     if handler is not None:
-        ctx.cancelled = self._cancelled  # sync before each handler
-        await handler(chunk, ctx)
+        await handler(self, chunk, ctx)
 ```
 
 ### Registry initialization
