@@ -93,9 +93,8 @@
 }
 
 .task-board-card-top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(9rem, 38%);
-  align-items: start;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
@@ -179,21 +178,17 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
-  align-self: start;
-  justify-self: end;
   gap: 6px;
-  width: fit-content;
-  max-width: 100%;
+  width: 100%;
 }
 
 .kanban-cell .task-board-card-top {
-  grid-template-columns: minmax(0, 1fr);
+  /* Default flex-column already gives us actions-above-title single-axis layout.
+     No override needed — card adapts naturally to narrow columns. */
 }
 
 .kanban-cell .task-board-card-actions {
-  justify-content: flex-start;
-  justify-self: stretch;
-  max-width: none;
+  justify-content: flex-end;
 }
 
 .task-board-name-row {

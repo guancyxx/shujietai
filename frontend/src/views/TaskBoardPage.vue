@@ -82,6 +82,15 @@ onMounted(async () => { await ts.loadTaskBoardItems() })
                       @dragend="ts.handleTaskBoardDragEnd"
                     >
                       <div class="task-board-card-top">
+                        <div class="task-board-card-actions">
+                          <select class="priority-badge priority-select" :class="`priority-P${ts.getTaskPriority(item) - 1}`" :value="ts.getTaskPriority(item)" :disabled="ts.quickUpdatingTaskBoardItemId === item.id" aria-label="调整任务优先级" @change.stop="ts.updateTaskBoardPriority(item, $event)" @click.stop>
+                            <option v-for="opt in ts.taskBoardPriorityOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                          </select>
+                          <button type="button" class="project-btn" @click.stop="ts.openTaskBoardDetailModal(item)">详情</button>
+                          <button type="button" class="project-btn project-btn-primary" :disabled="ts.startingConversationFromTask" @click.stop="ts.startConversationFromTask(item)">{{ ts.startingConversationFromTask ? '...' : '会话' }}</button>
+                          <button type="button" class="project-btn" @click.stop="ts.openTaskBoardEditModal(item)">编辑</button>
+                          <button type="button" class="card-archive-btn" :disabled="ts.archivingTaskId === item.id" :aria-label="`归档任务 ${item.name}`" @click.stop="ts.archiveTaskBoardItem(item)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11v7.333A1.167 1.167 0 0112.333 14H3.667A1.167 1.167 0 012.5 12.833V5.5z"/><path d="M1.833 3.167h12.334V5.5H1.833zM5.333 8h5.334"/></svg></button>
+                        </div>
                         <div class="task-board-title-wrap">
                           <div class="task-board-name-row">
                             <button v-if="item.children && item.children.length" type="button" class="task-tree-toggle" @click.stop="ts.toggleTaskNode(item)">{{ ts.collapsedTaskNodes.has(item.id) ? '▶' : '▼' }}</button>
@@ -92,15 +101,6 @@ onMounted(async () => { await ts.loadTaskBoardItems() })
                             <span class="priority-badge" :class="`priority-P${ts.getTaskPriority(item) - 1}`">{{ ts.KANBAN_PRIORITY_LABELS[ts.getTaskPriority(item)] }}</span>
                             <span v-if="item.children && item.children.length" class="task-child-count">{{ item.children.length }} 子任务</span>
                           </div>
-                        </div>
-                        <div class="task-board-card-actions">
-                          <select class="priority-badge priority-select" :class="`priority-P${ts.getTaskPriority(item) - 1}`" :value="ts.getTaskPriority(item)" :disabled="ts.quickUpdatingTaskBoardItemId === item.id" aria-label="调整任务优先级" @change.stop="ts.updateTaskBoardPriority(item, $event)" @click.stop>
-                            <option v-for="opt in ts.taskBoardPriorityOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                          </select>
-                          <button type="button" class="project-btn" @click.stop="ts.openTaskBoardDetailModal(item)">详情</button>
-                          <button type="button" class="project-btn project-btn-primary" :disabled="ts.startingConversationFromTask" @click.stop="ts.startConversationFromTask(item)">{{ ts.startingConversationFromTask ? '...' : '会话' }}</button>
-                          <button type="button" class="project-btn" @click.stop="ts.openTaskBoardEditModal(item)">编辑</button>
-                          <button type="button" class="card-archive-btn" :disabled="ts.archivingTaskId === item.id" :aria-label="`归档任务 ${item.name}`" @click.stop="ts.archiveTaskBoardItem(item)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11v7.333A1.167 1.167 0 0112.333 14H3.667A1.167 1.167 0 012.5 12.833V5.5z"/><path d="M1.833 3.167h12.334V5.5H1.833zM5.333 8h5.334"/></svg></button>
                         </div>
                       </div>
                       <div class="task-board-desc task-board-desc-compact">{{ item.description || '暂无描述' }}</div>
@@ -116,6 +116,7 @@ onMounted(async () => { await ts.loadTaskBoardItems() })
                         <template v-for="child in item.children" :key="child.id">
                           <div class="task-board-card task-board-card-child" :class="{ 'task-board-card-highlighted': ts.highlightedTaskBoardItemId === child.id }" draggable="true" @dragstart="ts.handleTaskBoardDragStart(child, $event)" @dragend="ts.handleTaskBoardDragEnd">
                             <div class="task-board-card-top">
+                              <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="ts.openTaskBoardDetailModal(child)">详情</button><button type="button" class="project-btn" @click.stop="ts.openTaskBoardEditModal(child)">编辑</button><button type="button" class="card-archive-btn" :disabled="ts.archivingTaskId === child.id" :aria-label="`归档任务 ${child.name}`" @click.stop="ts.archiveTaskBoardItem(child)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11v7.333A1.167 1.167 0 0112.333 14H3.667A1.167 1.167 0 012.5 12.833V5.5z"/><path d="M1.833 3.167h12.334V5.5H1.833zM5.333 8h5.334"/></svg></button></div>
                               <div class="task-board-title-wrap">
                                 <div class="task-board-name-row">
                                   <button v-if="child.children && child.children.length" type="button" class="task-tree-toggle" @click.stop="ts.toggleTaskNode(child)">{{ ts.collapsedTaskNodes.has(child.id) ? '▶' : '▼' }}</button>
@@ -127,7 +128,6 @@ onMounted(async () => { await ts.loadTaskBoardItems() })
                                   <span v-if="child.children && child.children.length" class="task-child-count">{{ child.children.length }} 子任务</span>
                                 </div>
                               </div>
-                              <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="ts.openTaskBoardDetailModal(child)">详情</button><button type="button" class="project-btn" @click.stop="ts.openTaskBoardEditModal(child)">编辑</button><button type="button" class="card-archive-btn" :disabled="ts.archivingTaskId === child.id" :aria-label="`归档任务 ${child.name}`" @click.stop="ts.archiveTaskBoardItem(child)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11v7.333A1.167 1.167 0 0112.333 14H3.667A1.167 1.167 0 012.5 12.833V5.5z"/><path d="M1.833 3.167h12.334V5.5H1.833zM5.333 8h5.334"/></svg></button></div>
                             </div>
                             <div class="task-board-desc task-board-desc-compact">{{ child.description || '暂无描述' }}</div>
                             <div v-if="ts.requiresTaskStatusReason(child.status) && child.status_reason" class="task-board-status-reason">
@@ -138,13 +138,13 @@ onMounted(async () => { await ts.loadTaskBoardItems() })
                               <template v-for="grandchild in child.children" :key="grandchild.id">
                                 <div class="task-board-card task-board-card-child task-board-card-grandchild" :class="{ 'task-board-card-highlighted': ts.highlightedTaskBoardItemId === grandchild.id }">
                                   <div class="task-board-card-top">
+                                    <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="ts.openTaskBoardDetailModal(grandchild)">详情</button><button type="button" class="project-btn" @click.stop="ts.openTaskBoardEditModal(grandchild)">编辑</button></div>
                                     <div class="task-board-title-wrap">
                                       <div class="task-board-name-row">
                                         <span class="task-tree-spacer"></span>
                                         <span class="task-board-name">{{ grandchild.name }}</span>
                                       </div>
                                     </div>
-                                    <div class="task-board-card-actions"><button type="button" class="project-btn" @click.stop="ts.openTaskBoardDetailModal(grandchild)">详情</button><button type="button" class="project-btn" @click.stop="ts.openTaskBoardEditModal(grandchild)">编辑</button></div>
                                   </div>
                                   <div class="task-board-desc task-board-desc-compact">{{ grandchild.description || '暂无描述' }}</div>
                                 </div>
