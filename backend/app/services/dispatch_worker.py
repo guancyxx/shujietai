@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
 
 from app.connectors.registry import get_connector, list_platforms
 from app.schemas import DispatchTaskItem, normalize_platform
@@ -72,6 +74,30 @@ def _tool_call_id(chunk: dict[str, Any]) -> str:
     return f"tc_{index}_{function_name}"
 
 
+# ---------------------------------------------------------------------------
+# Chunk handler registry types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ChunkContext:
+    """Mutable context shared across chunk handlers during one streaming call.
+
+    Handler methods receive this as their second argument and can mutate
+    ``full_content`` and ``tool_calls_in_flight``.
+    """
+
+    full_content: str = ""
+    tool_calls_in_flight: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+# A chunk handler in the registry is an unbound TaskWorker method:
+# (self, chunk, ctx) -> Coroutine[None].
+ChunkHandler = Callable[
+    ["TaskWorker", dict[str, Any], ChunkContext],
+    Coroutine[Any, Any, None],
+]
+
+
 class TaskWorker:
     """Single-task async worker. One instance per dispatch task run."""
 
@@ -84,7 +110,6 @@ class TaskWorker:
         self._task = task
         self._svc = dispatch_service
         self._ws = ws_manager
-        self._cancelled = False
         self._interrupted = False
         self._interrupt_msg = ""
         self._tool_calls_in_flight: dict[str, dict[str, Any]] = {}
@@ -222,8 +247,205 @@ class TaskWorker:
         except Exception as exc:
             logger.warning("Failed to persist assistant reply for task %s: %s", self._task.id, exc)
 
+    # ------------------------------------------------------------------
+    # Chunk handlers — one method per chunk type (Open/Closed Principle)
+    # ------------------------------------------------------------------
+
+    _chunk_handlers: ClassVar[dict[str, ChunkHandler]] = {}
+
+    async def _handle_content(
+        self, chunk: dict[str, Any], ctx: ChunkContext
+    ) -> None:
+        content_piece = chunk["content"]
+        ctx.full_content += content_piece
+        await self._emit_event(
+            "content_delta",
+            {"role": "assistant", "content": content_piece},
+            event_name="message.assistant.delta",
+            status=self._task.status,
+        )
+
+    async def _handle_tool_call(
+        self, chunk: dict[str, Any], ctx: ChunkContext
+    ) -> None:
+        tool_call_id = _tool_call_id(chunk)
+        function_name = chunk.get("function_name", "")
+        function_args_delta = chunk.get("function_args_delta", "")
+        current_tool = ctx.tool_calls_in_flight.get(tool_call_id)
+
+        if current_tool is None:
+            current_tool = {
+                "function_name": function_name,
+                "function_args": "",
+                "index": chunk.get("index", 0),
+                "id": chunk.get("id", ""),
+            }
+            ctx.tool_calls_in_flight[tool_call_id] = current_tool
+            await self._emit_event(
+                "tool_call",
+                {
+                    "tool_call_id": tool_call_id,
+                    "index": current_tool["index"],
+                    "id": current_tool["id"],
+                    "function_name": function_name,
+                },
+                event_name="tool.call.started",
+                status=self._task.status,
+                tool_call_id=tool_call_id,
+            )
+
+        if function_name:
+            current_tool["function_name"] = function_name
+        if function_args_delta:
+            current_tool["function_args"] += function_args_delta
+            await self._emit_event(
+                "tool_call",
+                {
+                    "tool_call_id": tool_call_id,
+                    "function_name": current_tool["function_name"],
+                    "function_args_delta": function_args_delta,
+                },
+                event_name="tool.call.delta",
+                status=self._task.status,
+                tool_call_id=tool_call_id,
+            )
+
+    async def _handle_finish(
+        self, chunk: dict[str, Any], ctx: ChunkContext
+    ) -> None:
+        for tool_call_id, tool_state in list(ctx.tool_calls_in_flight.items()):
+            await self._emit_event(
+                "tool_call",
+                {
+                    "tool_call_id": tool_call_id,
+                    "function_name": tool_state.get("function_name", "tool"),
+                    "function_args": tool_state.get("function_args", ""),
+                },
+                event_name="tool.call.completed",
+                status=self._task.status,
+                tool_call_id=tool_call_id,
+            )
+        ctx.tool_calls_in_flight.clear()
+
+        finish_reason = chunk.get("finish_reason", "")
+        usage = chunk.get("usage", {})
+        await self._emit_event(
+            "progress",
+            {"finish_reason": finish_reason, "usage": usage},
+            event_name="task.progress.finish",
+            status=self._task.status,
+        )
+
+    async def _handle_tool_start(
+        self, chunk: dict[str, Any], ctx: ChunkContext
+    ) -> None:
+        # Emitted by the Hermes connector when a tool invocation begins.
+        tool_name = str(
+            chunk.get("tool")
+            or chunk.get("tool_name")
+            or chunk.get("function_name")
+            or "tool"
+        )
+        tool_call_id = str(
+            chunk.get("tool_call_id")
+            or chunk.get("id")
+            or f"run_tool_{tool_name}_{id(chunk)}"
+        )
+        payload = _normalize_tool_payload(chunk, tool_call_id=tool_call_id)
+        ctx.tool_calls_in_flight[tool_call_id] = {
+            "function_name": payload["function_name"],
+            "tool_name": payload["tool_name"],
+            "function_args": payload.get("function_args", ""),
+            "index": len(ctx.tool_calls_in_flight),
+            "id": tool_call_id,
+            "started_at": __import__("time").monotonic(),
+            "payload": payload,
+        }
+        await self._emit_event(
+            "tool_call",
+            payload,
+            event_name="tool.call.started",
+            status=self._task.status,
+            tool_call_id=tool_call_id,
+        )
+
+    async def _handle_tool_complete(
+        self, chunk: dict[str, Any], ctx: ChunkContext
+    ) -> None:
+        # Match the in-flight record by stable id first, then tool name.
+        tool_name = str(
+            chunk.get("tool")
+            or chunk.get("tool_name")
+            or chunk.get("function_name")
+            or "tool"
+        )
+        matched_id: str | None = (
+            str(chunk.get("tool_call_id") or chunk.get("id") or "")
+            or None
+        )
+        if matched_id not in ctx.tool_calls_in_flight:
+            matched_id = None
+            for tid, state in ctx.tool_calls_in_flight.items():
+                if (
+                    state.get("tool_name") == tool_name
+                    or state.get("function_name") == tool_name
+                ):
+                    matched_id = tid
+                    break
+        if matched_id is None:
+            matched_id = f"run_tool_{tool_name}_complete"
+
+        duration = chunk.get("duration")
+        is_error = bool(chunk.get("error", False))
+        state = ctx.tool_calls_in_flight.get(matched_id) or {}
+        started = state.get("started_at")
+        if duration is None and started is not None:
+            import time
+
+            duration = round(time.monotonic() - started, 3)
+
+        base_payload = dict(state.get("payload") or {})
+        base_payload.update(
+            _normalize_tool_payload(chunk, tool_call_id=matched_id)
+        )
+        base_payload["duration"] = duration
+        base_payload["duration_ms"] = (
+            round(float(duration) * 1000) if duration is not None else None
+        )
+        base_payload["error"] = is_error
+
+        ctx.tool_calls_in_flight.pop(matched_id, None)
+        await self._emit_event(
+            "tool_call",
+            base_payload,
+            event_name="tool.call.completed",
+            status=self._task.status,
+            tool_call_id=matched_id,
+        )
+
+    async def _handle_agent_thinking(
+        self, chunk: dict[str, Any], ctx: ChunkContext
+    ) -> None:
+        # Reasoning text from extended-thinking models.
+        thinking_text = chunk.get("text", "")
+        if thinking_text:
+            await self._emit_event(
+                "agent_thinking",
+                {"text": thinking_text},
+                event_name="agent.thinking",
+                status=self._task.status,
+            )
+
+    # Unused chunk dict; kept so the handler always receives two args.
+    async def _handle_error(
+        self, chunk: dict[str, Any], _ctx: ChunkContext
+    ) -> None:
+        raise RuntimeError(
+            chunk.get("error", "unknown_connector_error")
+        )
+
     async def _execute_ai_call(self) -> None:
-        """Execute the AI connector call and stream results."""
+        """Execute the AI connector call and stream results via handler registry."""
         task_id = self._task.id
         config = self._task.config or {}
         ai_platform = self._task.ai_platform
@@ -232,7 +454,9 @@ class TaskWorker:
         connector = get_connector(ai_platform)
         if connector is None:
             available = ", ".join(list_platforms()) or "(none)"
-            raise RuntimeError(f"unsupported_ai_platform: {ai_platform} (available: {available})")
+            raise RuntimeError(
+                f"unsupported_ai_platform: {ai_platform} (available: {available})"
+            )
 
         # Build messages from config + history
         history = self._svc.reconstruct_history(task_id)
@@ -240,198 +464,46 @@ class TaskWorker:
 
         # Determine if this is a fresh call or a resume
         if not history:
-            messages.append({"role": "user", "content": self._task.initial_prompt})
+            messages.append(
+                {"role": "user", "content": self._task.initial_prompt}
+            )
             await self._emit_event(
                 "content_delta",
-                {
-                    "role": "user",
-                    "content": self._task.initial_prompt,
-                },
+                {"role": "user", "content": self._task.initial_prompt},
                 event_name="message.user.delta",
                 status=self._task.status,
             )
 
-        # Stream from the connector and process chunks
-        full_content = ""
+        ctx = ChunkContext(
+            full_content="",
+            tool_calls_in_flight=self._tool_calls_in_flight,
+        )
 
+        # Stream from the connector and dispatch via handler registry
         async for chunk in connector.stream_completion(messages, config):
-            if self._cancelled:
-                return
-
             chunk_type = chunk.get("type")
-
-            if chunk_type in ("content", "content_delta"):
-                content_piece = chunk["content"]
-                full_content += content_piece
-                await self._emit_event(
-                    "content_delta",
-                    {
-                        "role": "assistant",
-                        "content": content_piece,
-                    },
-                    event_name="message.assistant.delta",
-                    status=self._task.status,
-                )
-
-            elif chunk_type == "tool_call":
-                tool_call_id = _tool_call_id(chunk)
-                function_name = chunk.get("function_name", "")
-                function_args_delta = chunk.get("function_args_delta", "")
-                current_tool = self._tool_calls_in_flight.get(tool_call_id)
-
-                if current_tool is None:
-                    current_tool = {
-                        "function_name": function_name,
-                        "function_args": "",
-                        "index": chunk.get("index", 0),
-                        "id": chunk.get("id", ""),
-                    }
-                    self._tool_calls_in_flight[tool_call_id] = current_tool
-                    await self._emit_event(
-                        "tool_call",
-                        {
-                            "tool_call_id": tool_call_id,
-                            "index": current_tool["index"],
-                            "id": current_tool["id"],
-                            "function_name": function_name,
-                        },
-                        event_name="tool.call.started",
-                        status=self._task.status,
-                        tool_call_id=tool_call_id,
-                    )
-
-                if function_name:
-                    current_tool["function_name"] = function_name
-                if function_args_delta:
-                    current_tool["function_args"] += function_args_delta
-                    await self._emit_event(
-                        "tool_call",
-                        {
-                            "tool_call_id": tool_call_id,
-                            "function_name": current_tool["function_name"],
-                            "function_args_delta": function_args_delta,
-                        },
-                        event_name="tool.call.delta",
-                        status=self._task.status,
-                        tool_call_id=tool_call_id,
-                    )
-
-            elif chunk_type == "finish":
-                for tool_call_id, tool_state in list(self._tool_calls_in_flight.items()):
-                    await self._emit_event(
-                        "tool_call",
-                        {
-                            "tool_call_id": tool_call_id,
-                            "function_name": tool_state.get("function_name", "tool"),
-                            "function_args": tool_state.get("function_args", ""),
-                        },
-                        event_name="tool.call.completed",
-                        status=self._task.status,
-                        tool_call_id=tool_call_id,
-                    )
-                self._tool_calls_in_flight.clear()
-
-                finish_reason = chunk.get("finish_reason", "")
-                usage = chunk.get("usage", {})
-                await self._emit_event(
-                    "progress",
-                    {
-                        "finish_reason": finish_reason,
-                        "usage": usage,
-                    },
-                    event_name="task.progress.finish",
-                    status=self._task.status,
-                )
-
-            elif chunk_type == "tool_start":
-                # Emitted by the Hermes connector when a tool invocation begins.
-                tool_name = str(chunk.get("tool") or chunk.get("tool_name") or chunk.get("function_name") or "tool")
-                tool_call_id = str(chunk.get("tool_call_id") or chunk.get("id") or f"run_tool_{tool_name}_{id(chunk)}")
-                payload = _normalize_tool_payload(chunk, tool_call_id=tool_call_id)
-                self._tool_calls_in_flight[tool_call_id] = {
-                    "function_name": payload["function_name"],
-                    "tool_name": payload["tool_name"],
-                    "function_args": payload.get("function_args", ""),
-                    "index": len(self._tool_calls_in_flight),
-                    "id": tool_call_id,
-                    "started_at": __import__("time").monotonic(),
-                    "payload": payload,
-                }
-                await self._emit_event(
-                    "tool_call",
-                    payload,
-                    event_name="tool.call.started",
-                    status=self._task.status,
-                    tool_call_id=tool_call_id,
-                )
-
-            elif chunk_type == "tool_complete":
-                # Match the in-flight record by stable id first, then tool name.
-                tool_name = str(chunk.get("tool") or chunk.get("tool_name") or chunk.get("function_name") or "tool")
-                matched_id = str(chunk.get("tool_call_id") or chunk.get("id") or "") or None
-                if matched_id not in self._tool_calls_in_flight:
-                    matched_id = None
-                    for tid, state in self._tool_calls_in_flight.items():
-                        if state.get("tool_name") == tool_name or state.get("function_name") == tool_name:
-                            matched_id = tid
-                            break
-                if matched_id is None:
-                    matched_id = f"run_tool_{tool_name}_complete"
-
-                duration = chunk.get("duration")
-                is_error = bool(chunk.get("error", False))
-                state = self._tool_calls_in_flight.get(matched_id) or {}
-                started = state.get("started_at")
-                if duration is None and started is not None:
-                    import time
-                    duration = round(time.monotonic() - started, 3)
-
-                base_payload = dict(state.get("payload") or {})
-                base_payload.update(_normalize_tool_payload(chunk, tool_call_id=matched_id))
-                base_payload["duration"] = duration
-                base_payload["duration_ms"] = round(float(duration) * 1000) if duration is not None else None
-                base_payload["error"] = is_error
-
-                self._tool_calls_in_flight.pop(matched_id, None)
-                await self._emit_event(
-                    "tool_call",
-                    base_payload,
-                    event_name="tool.call.completed",
-                    status=self._task.status,
-                    tool_call_id=matched_id,
-                )
-
-            elif chunk_type == "agent_thinking":
-                # Reasoning text from extended-thinking models.
-                thinking_text = chunk.get("text", "")
-                if thinking_text:
-                    await self._emit_event(
-                        "agent_thinking",
-                        {"text": thinking_text},
-                        event_name="agent.thinking",
-                        status=self._task.status,
-                    )
-
-            elif chunk_type == "error":
-                raise RuntimeError(chunk.get("error", "unknown_connector_error"))
+            handler = self._chunk_handlers.get(chunk_type)
+            if handler is not None:
+                await handler(self, chunk, ctx)
 
         # Store the complete assistant message in dispatch events.
         await self._emit_event(
             "content_full",
-            {
-                "role": "assistant",
-                "content": full_content,
-            },
+            {"role": "assistant", "content": ctx.full_content},
             event_name="message.assistant.full",
             status=self._task.status,
         )
         # Persist into session timeline storage so message survives page switches/reloads.
-        self._write_assistant_to_store(full_content)
+        self._write_assistant_to_store(ctx.full_content)
 
         # Check if the AI is requesting human input
-        if full_content.strip().startswith(_AWAITING_INPUT_MARKER):
-            prompt = full_content.strip()[len(_AWAITING_INPUT_MARKER):].strip()
-            awaiting_task = self._svc.transition_task(task_id, "awaiting_input", emit_status_event=False)
+        if ctx.full_content.strip().startswith(_AWAITING_INPUT_MARKER):
+            prompt = (
+                ctx.full_content.strip()[len(_AWAITING_INPUT_MARKER) :].strip()
+            )
+            awaiting_task = self._svc.transition_task(
+                task_id, "awaiting_input", emit_status_event=False
+            )
             if awaiting_task is not None:
                 self._task = awaiting_task
             await self._emit_event(
@@ -441,8 +513,12 @@ class TaskWorker:
                 status="awaiting_input",
             )
         else:
-            summary = full_content[:200] if full_content else "(no content)"
-            completed_task = self._svc.transition_task(task_id, "completed", emit_status_event=False)
+            summary = (
+                ctx.full_content[:200] if ctx.full_content else "(no content)"
+            )
+            completed_task = self._svc.transition_task(
+                task_id, "completed", emit_status_event=False
+            )
             if completed_task is not None:
                 self._task = completed_task
             await self._emit_event(
@@ -464,6 +540,22 @@ class TaskWorker:
             messages.append({"role": "system", "content": system_prompt.strip()})
         messages.extend(history)
         return messages
+
+
+# ---------------------------------------------------------------------------
+# Populate the handler registry (done at module level so all handler names are
+# bound; adding a new chunk type requires only this dict + a handler method).
+# ---------------------------------------------------------------------------
+TaskWorker._chunk_handlers = {
+    "content": TaskWorker._handle_content,
+    "content_delta": TaskWorker._handle_content,
+    "tool_call": TaskWorker._handle_tool_call,
+    "finish": TaskWorker._handle_finish,
+    "tool_start": TaskWorker._handle_tool_start,
+    "tool_complete": TaskWorker._handle_tool_complete,
+    "agent_thinking": TaskWorker._handle_agent_thinking,
+    "error": TaskWorker._handle_error,
+}
 
 
 class DispatchWorkerPool:
