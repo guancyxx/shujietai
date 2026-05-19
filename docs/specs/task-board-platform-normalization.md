@@ -99,14 +99,15 @@ print('PASS: default=hermes')"
 curl -s -X POST http://localhost:18000/api/v1/task-board \
   -H 'Content-Type: application/json' \
   -d '{"name":"test","ai_platform":"none"}' \
-  -w '\n%{http_code}' | python3 -c "
+  -w '\n__STATUS__:%{http_code}' | python3 -c "
 import sys
 payload = sys.stdin.read().rstrip('\n')
-if '\n' not in payload:
+marker = '\n__STATUS__:'
+if marker not in payload:
     raise AssertionError(
-        f'FAIL: expected response body and status code separated by newline, got: {payload!r}'
+        f'FAIL: expected marker {marker!r} in curl output, got: {payload!r}'
     )
-body, status = payload.rsplit('\n', 1)
+body, status = payload.rsplit(marker, 1)
 assert status == '422', f'FAIL: expected 422, got {status}. body={body}'
 print('PASS: none rejected with 422')"
 
