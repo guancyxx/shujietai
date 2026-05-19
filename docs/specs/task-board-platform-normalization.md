@@ -59,11 +59,25 @@ Downgrade is a deliberate no-op (cannot restore original `none` assignments).
 ## Verification Commands
 
 ```bash
-# Count none/empty tasks
-curl -s http://localhost:18000/api/v1/task-board | python3 -c "
-import json, sys; d=json.load(sys.stdin)
-none = [i for i in d['items'] if i.get('ai_platform')=='none' or not i.get('ai_platform')]
-print(f'none/empty: {len(none)}')"
+# Audit persisted rows: all task-board items (including archived) and all dispatch tasks
+docker exec shujietai-backend python -c "
+import sqlite3
+
+conn = sqlite3.connect('/app/data/shujietai.db')
+cur = conn.cursor()
+invalid = \"ai_platform IS NULL OR TRIM(ai_platform) = '' OR LOWER(TRIM(ai_platform)) = 'none'\"
+
+task_board_invalid = cur.execute(
+    f'SELECT COUNT(*) FROM task_board_items WHERE {invalid}'
+).fetchone()[0]
+dispatch_invalid = cur.execute(
+    f'SELECT COUNT(*) FROM dispatch_tasks WHERE {invalid}'
+).fetchone()[0]
+
+print(f'task_board_items none/empty/null: {task_board_invalid}')
+print(f'dispatch_tasks none/empty/null: {dispatch_invalid}')
+print(f'total none/empty/null: {task_board_invalid + dispatch_invalid}')
+"
 
 # Test default platform on create
 curl -s -X POST http://localhost:18000/api/v1/task-board \
