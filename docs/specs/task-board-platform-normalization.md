@@ -27,7 +27,8 @@ Ensure every task-board item and dispatch task has a valid, executable `ai_platf
 
 - Create modal: `<select>` with single `<option value="hermes">hermes</option>`. No `none` option exposed.
 - Edit modal: same single-option select.
-- Store state: `taskBoardCreateForm` defaults `ai_platform` to `'hermes'`, and `resetTaskBoardCreateForm()` clears it back to `'hermes'`. `taskBoardEditForm` also uses `'hermes'` as its default/populated platform value, but there is no corresponding edit-form reset on close; closing the edit modal clears only the edit id and leaves edit form state until the next open.
+- Store state (create): `taskBoardCreateForm` defaults `ai_platform` to `'hermes'`, and `resetTaskBoardCreateForm()` clears it back to `'hermes'`.
+- Store state (edit): `taskBoardEditForm` also uses `'hermes'` as its default/populated platform value, but there is no corresponding edit-form reset on close; closing the edit modal clears only the edit id and leaves edit form state until the next open.
 - `openTaskBoardEditModal()`: if loaded item has `ai_platform=none` or falsy, normalizes to `'hermes'` before populating the form.
 - `startConversationFromTask()`: treats `none` as `hermes` when starting dispatch.
 - `buildTaskSystemPrompt()`: treats `none` as `hermes` in the system prompt.
@@ -88,16 +89,15 @@ assert d.get('ai_platform')=='hermes', f'FAIL: {d.get(\"ai_platform\")}'
 print('PASS: default=hermes')"
 
 # Test none rejection
-response=$(curl -s -o /tmp/task-board-none-response.json -w '%{http_code}' \
-  -X POST http://localhost:18000/api/v1/task-board \
+curl -s -X POST http://localhost:18000/api/v1/task-board \
   -H 'Content-Type: application/json' \
-  -d '{"name":"test","ai_platform":"none"}') && \
-python3 -c "
-import pathlib, sys
-status = sys.argv[1]
-body = pathlib.Path('/tmp/task-board-none-response.json').read_text()
+  -d '{"name":"test","ai_platform":"none"}' \
+  -w '\n%{http_code}' | python3 -c "
+import sys
+payload = sys.stdin.read().rstrip('\n')
+body, status = payload.rsplit('\n', 1)
 assert status == '422', f'FAIL: expected 422, got {status}. body={body}'
-print('PASS: none rejected with 422')" "$response"
+print('PASS: none rejected with 422')"
 
 # Run backend tests
 docker exec shujietai-backend python -m pytest tests/test_sqlalchemy_store.py -v
