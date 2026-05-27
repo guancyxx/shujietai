@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { fetchJson, postJson, patchJson } from '../services/apiClient.js'
+import router from '../router/index.js'
 import {
   TASK_BOARD_STATUS_OPTIONS, TASK_BOARD_STATUS_LABEL_MAP,
   TASK_BOARD_PRIORITY_OPTIONS, TASK_BOARD_PRIORITY_LABEL_MAP,
@@ -249,7 +249,6 @@ export const useTaskStore = defineStore('task', () => {
 
   async function selectExistingDispatchSession(task, dispatchTask) {
     const ss = useSessionStore()
-    const router = useRouter()
     const esid = dispatchTask.external_session_id || dispatchTask.id
     await ss.loadSessions()
     const safePlat = (v) => { const v2 = (v || '').trim().toLowerCase(); return v2 === 'none' || !v2 ? 'hermes' : v2 }
@@ -268,7 +267,6 @@ export const useTaskStore = defineStore('task', () => {
     if (startingConversationFromTask.value) return
     startingConversationFromTask.value = true
     const ss = useSessionStore()
-    const router = useRouter()
     ss.errorMessage = ''
     try {
       let resolved = null

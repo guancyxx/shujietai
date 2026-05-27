@@ -44,6 +44,7 @@ curl -s http://localhost:18000/api/v1/dispatch/task-board/<task_id>/work-session
 - Keep handlers small and single-purpose.
 - Prefer guard clauses over nested conditionals.
 - Use the existing task store and session store APIs instead of adding new ad hoc state.
+- Task-board store actions must not call `useRouter()` inside Pinia actions; navigation should use the app router singleton or be delegated from component setup so the Session action never depends on component injection context.
 - Keep comments in English only.
 
 Example style:
