@@ -8,6 +8,7 @@ from app.schemas import (
     DispatchCreateRequest,
     DispatchEventListResponse,
     DispatchResumeRequest,
+    DispatchSessionResolutionResponse,
     DispatchTaskItem,
     DispatchTaskListResponse,
     EmergencyStopResponse,
@@ -191,6 +192,21 @@ def resolve_task_board_work_session(task_board_item_id: str) -> WorkSessionRespo
     latest = result.get("latest_dispatch_task")
     return WorkSessionResponse(
         task_board_item_id=result["task_board_item_id"],
+        recommended_action=result["recommended_action"],
+        active_dispatch_task=active if isinstance(active, DispatchTaskItem) else None,
+        latest_dispatch_task=latest if isinstance(latest, DispatchTaskItem) else None,
+    )
+
+
+@router.get("/session/{external_session_id}", response_model=DispatchSessionResolutionResponse)
+def resolve_dispatch_session(external_session_id: str, platform: str = Query(default="hermes")) -> DispatchSessionResolutionResponse:
+    svc = _get_dispatch_service()
+    result = svc.resolve_session_dispatch(platform, external_session_id)
+    active = result.get("active_dispatch_task")
+    latest = result.get("latest_dispatch_task")
+    return DispatchSessionResolutionResponse(
+        platform=result["platform"],
+        external_session_id=result["external_session_id"],
         recommended_action=result["recommended_action"],
         active_dispatch_task=active if isinstance(active, DispatchTaskItem) else None,
         latest_dispatch_task=latest if isinstance(latest, DispatchTaskItem) else None,

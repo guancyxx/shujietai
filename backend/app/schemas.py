@@ -426,3 +426,11 @@ class WorkSessionResponse(BaseModel):
     recommended_action: str  # 'resume' | 'view_history' | 'create_new'
     active_dispatch_task: DispatchTaskItem | None = None
     latest_dispatch_task: DispatchTaskItem | None = None
+
+
+class DispatchSessionResolutionResponse(BaseModel):
+    platform: str
+    external_session_id: str
+    recommended_action: str  # 'resume' | 'view_history' | 'create_new'
+    active_dispatch_task: DispatchTaskItem | None = None
+    latest_dispatch_task: DispatchTaskItem | None = None

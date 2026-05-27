@@ -68,6 +68,8 @@ export const useSessionStore = defineStore('session', () => {
   // --- Getters ---
   const selectedSession = computed(() => sessions.value.find(s => s.id === selectedSessionId.value) || null)
 
+  const selectedSessionPlatform = computed(() => safePlatform(selectedSession.value?.platform || createConversationPlatform.value || blankChatProvider.value || 'hermes'))
+
   const blankChatProviders = computed(() => {
     const values = new Set(['hermes'])
     const runtime = cockpit.value?.runtime
@@ -168,7 +170,8 @@ export const useSessionStore = defineStore('session', () => {
       if (m) { selectedExternalSessionId.value = m.external_session_id; return }
     }
     if (selectedExternalSessionId.value) {
-      const m = orderedSessions.find(s => s.external_session_id === selectedExternalSessionId.value)
+      const activePlatform = selectedSessionPlatform.value
+      const m = orderedSessions.find(s => safePlatform(s.platform) === activePlatform && s.external_session_id === selectedExternalSessionId.value)
       if (m) { selectedSessionId.value = m.id; return }
     }
     if (orderedSessions.length > 0) {
@@ -239,20 +242,56 @@ export const useSessionStore = defineStore('session', () => {
     errorMessage.value = ''
     try {
       const externalSessionId = `web_${Date.now()}`
-      await postJson(`${apiBase}/api/v1/connectors/hermes/chat`, {
+      const platform = createConversationPlatform.value || 'hermes'
+      if (!wsConnected.value) wsConnect()
+      const dispatchTask = await createDispatchTask({
+        aiPlatform: platform,
+        initialPrompt: trimmed,
+        model: '',
+        skills: [],
+        mcpServers: [],
+        externalSessionId: externalSessionId,
+      })
+      await postJson(`${apiBase}/api/v1/events/ingest`, {
+        platform,
+        event_id: `evt_init_${dispatchTask.id}`,
+        event_type: 'session_started',
         external_session_id: externalSessionId,
-        platform: createConversationPlatform.value || 'hermes',
-        user_message: trimmed,
+        title: trimmed.slice(0, 80),
+        payload_json: {
+          source: 'blank-chat',
+          dispatch_task_id: dispatchTask.id,
+        },
+        message: { role: 'user', content: trimmed },
+      })
+      await postJson(`${apiBase}/api/v1/events/ingest`, {
+        platform,
+        event_id: `evt_progress_${dispatchTask.id}`,
+        event_type: 'dispatch_created',
+        external_session_id: externalSessionId,
+        title: trimmed.slice(0, 80),
+        payload_json: {
+          source: 'blank-chat',
+          status: 'running',
+          dispatch_task_id: dispatchTask.id,
+        },
+        message: { role: 'system', content: '🔄 已提交 Dispatch 任务，等待 AI Agent 处理中...' },
       })
       isCreateConversationModalOpen.value = false
+      createConversationInitialMessage.value = ''
       composerText.value = ''
+      isBlankChatMode.value = false
       await loadSessions()
-      const matched = sessions.value.find(s => s.external_session_id === externalSessionId)
+      const matched = sessions.value.find(s => safePlatform(s.platform) === safePlatform(platform) && s.external_session_id === externalSessionId)
       if (matched) {
         selectedSessionId.value = matched.id
         selectedExternalSessionId.value = matched.external_session_id
+      } else {
+        selectedSessionId.value = ''
+        selectedExternalSessionId.value = externalSessionId
       }
       await loadSessionData()
+      await restoreActiveDispatchTask()
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : 'Unknown error'
     } finally {
@@ -369,8 +408,14 @@ export const useSessionStore = defineStore('session', () => {
     return ''
   }
 
-  async function resolveDispatchTaskFromExternalSessionId(externalSessionId) {
+  async function resolveDispatchTaskFromExternalSessionId(externalSessionId, platform = 'hermes') {
     const n = String(externalSessionId || '').trim()
+    const p = safePlatform(platform)
+    if (!n) return null
+    try {
+      const resolved = await fetchJson(`${apiBase}/api/v1/dispatch/session/${encodeURIComponent(n)}?platform=${encodeURIComponent(p)}`)
+      return resolved.active_dispatch_task || resolved.latest_dispatch_task || null
+    } catch {}
     if (n.startsWith('dispatch_') && n.slice('dispatch_'.length)) {
       return await fetchJson(`${apiBase}/api/v1/dispatch/${n.slice('dispatch_'.length)}`)
     }
@@ -387,6 +432,7 @@ export const useSessionStore = defineStore('session', () => {
 
   async function restoreActiveDispatchTask() {
     const n = String(selectedExternalSessionId.value || '').trim()
+    const platform = selectedSessionPlatform.value
     if (!n) { clearActiveTask(); return }
     clearActiveTask()
     try {
@@ -395,7 +441,7 @@ export const useSessionStore = defineStore('session', () => {
       if (legacyId) {
         task = await fetchJson(`${apiBase}/api/v1/dispatch/${legacyId}`)
       } else {
-        task = await resolveDispatchTaskFromExternalSessionId(n)
+        task = await resolveDispatchTaskFromExternalSessionId(n, platform)
       }
       if (!task) return
       dispatchTaskId.value = task.id

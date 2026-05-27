@@ -216,6 +216,41 @@ class DispatchService:
             ).scalar_one_or_none()
             return _entity_to_item(row) if row is not None else None
 
+    def get_active_task_by_external_session_id(self, platform: str, external_session_id: str) -> DispatchTaskItem | None:
+        normalized_platform = normalize_platform(platform)
+        normalized = external_session_id.strip()
+        if not normalized:
+            return None
+        with self._session_factory() as db:
+            row = db.execute(
+                select(DispatchTaskEntity)
+                .where(
+                    DispatchTaskEntity.ai_platform == normalized_platform,
+                    DispatchTaskEntity.external_session_id == normalized,
+                    DispatchTaskEntity.status.in_(_DISPATCH_NON_TERMINAL_STATUSES),
+                )
+                .order_by(DispatchTaskEntity.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            return _entity_to_item(row) if row is not None else None
+
+    def get_latest_task_by_external_session_id(self, platform: str, external_session_id: str) -> DispatchTaskItem | None:
+        normalized_platform = normalize_platform(platform)
+        normalized = external_session_id.strip()
+        if not normalized:
+            return None
+        with self._session_factory() as db:
+            row = db.execute(
+                select(DispatchTaskEntity)
+                .where(
+                    DispatchTaskEntity.ai_platform == normalized_platform,
+                    DispatchTaskEntity.external_session_id == normalized,
+                )
+                .order_by(DispatchTaskEntity.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            return _entity_to_item(row) if row is not None else None
+
     def resolve_work_session(self, task_board_item_id: str) -> dict:
         """Resolve the canonical work session for a task-board item.
 
@@ -253,6 +288,46 @@ class DispatchService:
 
         return {
             "task_board_item_id": task_board_item_id,
+            "recommended_action": "create_new",
+            "active_dispatch_task": None,
+            "latest_dispatch_task": None,
+        }
+
+    def resolve_session_dispatch(self, platform: str, external_session_id: str) -> dict:
+        normalized_platform = normalize_platform(platform)
+        normalized = external_session_id.strip()
+        if not normalized:
+            return {
+                "platform": normalized_platform,
+                "external_session_id": external_session_id,
+                "recommended_action": "create_new",
+                "active_dispatch_task": None,
+                "latest_dispatch_task": None,
+            }
+
+        active = self.get_active_task_by_external_session_id(normalized_platform, normalized)
+        if active is not None:
+            return {
+                "platform": normalized_platform,
+                "external_session_id": normalized,
+                "recommended_action": "resume",
+                "active_dispatch_task": active,
+                "latest_dispatch_task": active,
+            }
+
+        latest = self.get_latest_task_by_external_session_id(normalized_platform, normalized)
+        if latest is not None:
+            return {
+                "platform": normalized_platform,
+                "external_session_id": normalized,
+                "recommended_action": "view_history",
+                "active_dispatch_task": None,
+                "latest_dispatch_task": latest,
+            }
+
+        return {
+            "platform": normalized_platform,
+            "external_session_id": normalized,
             "recommended_action": "create_new",
             "active_dispatch_task": None,
             "latest_dispatch_task": None,
