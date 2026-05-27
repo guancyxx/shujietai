@@ -27,6 +27,8 @@ export const useSessionStore = defineStore('session', () => {
   const streamingContent = ref('')
   const isStreaming = ref(false)
   const streamAbortController = ref(null)
+  const dispatchRestoreState = ref('idle')
+  const dispatchRestoreMessage = ref('')
 
   // Modals in App scope
   const isCreateConversationModalOpen = ref(false)
@@ -70,6 +72,12 @@ export const useSessionStore = defineStore('session', () => {
 
   const selectedSessionPlatform = computed(() => safePlatform(selectedSession.value?.platform || createConversationPlatform.value || blankChatProvider.value || 'hermes'))
 
+  const selectedSessionCanonicalDispatchTaskId = computed(() => String(selectedSession.value?.canonical_dispatch_task_id || '').trim())
+  const selectedSessionHasDispatchHistory = computed(() => {
+    if (!selectedSession.value) return false
+    return Boolean(selectedSession.value?.has_dispatch_history || selectedSessionCanonicalDispatchTaskId.value)
+  })
+
   const blankChatProviders = computed(() => {
     const values = new Set(['hermes'])
     const runtime = cockpit.value?.runtime
@@ -89,6 +97,7 @@ export const useSessionStore = defineStore('session', () => {
 
   const displayMessages = computed(() => {
     if (dispatchTaskId.value) return dispatchMessages.value
+    if (selectedSessionHasDispatchHistory.value) return []
     const msgs = [...(timeline.value.messages || [])]
     if (isStreaming.value && streamingContent.value) {
       msgs.push({
@@ -195,10 +204,18 @@ export const useSessionStore = defineStore('session', () => {
 
   async function loadSessionData() {
     if (!selectedSessionId.value) return
-    const timelineData = await fetchJson(`${apiBase}/api/v1/sessions/${selectedSessionId.value}/timeline`)
-    const cockpitData = await fetchCockpitData(selectedSessionId.value)
+    const [sessionData, timelineData, cockpitData] = await Promise.all([
+      fetchJson(`${apiBase}/api/v1/sessions/${selectedSessionId.value}`),
+      fetchJson(`${apiBase}/api/v1/sessions/${selectedSessionId.value}/timeline`),
+      fetchCockpitData(selectedSessionId.value),
+    ])
     timeline.value = timelineData
     cockpit.value = cockpitData
+    if (sessionData) {
+      const index = sessions.value.findIndex(s => s.id === sessionData.id)
+      if (index >= 0) sessions.value.splice(index, 1, sessionData)
+      else sessions.value.unshift(sessionData)
+    }
   }
 
   function selectConversation(sessionId, externalSessionId) {
@@ -433,17 +450,40 @@ export const useSessionStore = defineStore('session', () => {
   async function restoreActiveDispatchTask() {
     const n = String(selectedExternalSessionId.value || '').trim()
     const platform = selectedSessionPlatform.value
-    if (!n) { clearActiveTask(); return }
+    const canonicalTaskId = selectedSessionCanonicalDispatchTaskId.value
+
+    dispatchRestoreState.value = 'idle'
+    dispatchRestoreMessage.value = ''
+
+    if (!selectedSessionId.value) {
+      clearActiveTask()
+      return
+    }
+
+    if (!selectedSessionHasDispatchHistory.value && !n) {
+      clearActiveTask()
+      return
+    }
+
     clearActiveTask()
+    dispatchRestoreState.value = 'loading'
+
     try {
-      const legacyId = getDispatchTaskIdFromExternalSessionId(n)
       let task = null
-      if (legacyId) {
-        task = await fetchJson(`${apiBase}/api/v1/dispatch/${legacyId}`)
-      } else {
-        task = await resolveDispatchTaskFromExternalSessionId(n, platform)
+      if (canonicalTaskId) {
+        task = await fetchJson(`${apiBase}/api/v1/dispatch/${canonicalTaskId}`)
+      } else if (n) {
+        const legacyId = getDispatchTaskIdFromExternalSessionId(n)
+        if (legacyId) task = await fetchJson(`${apiBase}/api/v1/dispatch/${legacyId}`)
+        else task = await resolveDispatchTaskFromExternalSessionId(n, platform)
       }
-      if (!task) return
+
+      if (!task) {
+        dispatchRestoreState.value = selectedSessionHasDispatchHistory.value ? 'missing' : 'idle'
+        dispatchRestoreMessage.value = selectedSessionHasDispatchHistory.value ? '该会话标记为 dispatch 会话，但未找到可恢复的 dispatch 历史。' : ''
+        return
+      }
+
       dispatchTaskId.value = task.id
       dispatchActiveTask.value = task
       const nonTerminal = ['queued', 'running', 'awaiting_input', 'paused']
@@ -455,6 +495,7 @@ export const useSessionStore = defineStore('session', () => {
         on('completed', handleTaskEvent)
         on('error', handleTaskEvent)
         on('cancelled', handleTaskEvent)
+        on('interrupted', handleTaskEvent)
         if (!wsConnected.value) wsConnect()
         subscribe(task.id)
       }
@@ -467,14 +508,19 @@ export const useSessionStore = defineStore('session', () => {
         payload: evt.payload, created_at: evt.created_at || new Date().toISOString(),
       }))
       dispatchTaskEvents.value.sort((a, b) => {
+        const ta = new Date(a.created_at).getTime()
+        const tb = new Date(b.created_at).getTime()
+        if (ta !== tb) return ta - tb
         const sa = Number.isFinite(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
         const sb = Number.isFinite(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
-        if (sa !== sb) return sa - sb
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        return sa - sb
       })
+      dispatchRestoreState.value = 'ready'
     } catch (error) {
       console.warn('Failed to restore dispatch task', error)
       clearActiveTask()
+      dispatchRestoreState.value = 'error'
+      dispatchRestoreMessage.value = error instanceof Error ? error.message : '恢复 dispatch 历史失败'
     }
   }
 
@@ -529,7 +575,8 @@ export const useSessionStore = defineStore('session', () => {
     dispatchStatusLabelMap, dispatchStatusClassMap,
     wsConnected, wsConnect, createDispatchTask, resumeDispatchTask,
     cancelDispatchTask, abortDispatchTask, interruptDispatchTask, clearActiveTask,
-    selectedSession, displayMessages, latestDispatchEvent, conversationLatestStatus,
+    selectedSession, selectedSessionHasDispatchHistory, dispatchRestoreState, dispatchRestoreMessage,
+    displayMessages, latestDispatchEvent, conversationLatestStatus,
     platformOptions, renderMarkdown,
     timelineScrollRef, scrollToBottom, onTimelineScroll, resetTimelineScroll,
     loadSessions, loadSessionData, refreshData, restoreActiveDispatchTask,

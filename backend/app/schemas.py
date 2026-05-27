@@ -244,6 +244,8 @@ class SessionSummary(BaseModel):
     ended_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    canonical_dispatch_task_id: str | None = None
+    has_dispatch_history: bool = False
 
 
 class SessionDetail(SessionSummary):
