@@ -79,13 +79,7 @@ export const useSessionStore = defineStore('session', () => {
     return Array.from(values).sort()
   })
 
-  const platformOptions = computed(() => {
-    const values = new Set(['hermes'])
-    for (const item of sessions.value) {
-      if (item?.platform) values.add(item.platform)
-    }
-    return Array.from(values)
-  })
+  const platformOptions = computed(() => [...blankChatProviders.value])
 
   const displayMessages = computed(() => {
     if (dispatchTaskId.value) return dispatchMessages.value
@@ -219,7 +213,10 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function resetCreateConversationForm() {
-    createConversationPlatform.value = selectedSession.value?.platform || 'hermes'
+    const preferred = safePlatform(selectedSession.value?.platform || createConversationPlatform.value || 'hermes')
+    createConversationPlatform.value = platformOptions.value.includes(preferred)
+      ? preferred
+      : (platformOptions.value.includes('hermes') ? 'hermes' : (platformOptions.value[0] || 'hermes'))
     createConversationInitialMessage.value = ''
   }
 
