@@ -214,6 +214,19 @@ class TaskBoardListResponse(BaseModel):
     items: list[TaskBoardItem]
 
 
+class PrerequisiteCheckItem(BaseModel):
+    dependency_type: Literal["upstream", "parent"]
+    task_id: UUID | None = None
+    task_name: str | None = None
+    status: str | None = None
+    satisfied: bool
+
+
+class TaskBoardPrerequisiteCheckResponse(BaseModel):
+    all_satisfied: bool
+    checks: list[PrerequisiteCheckItem]
+
+
 class HermesChatResponse(BaseModel):
     request_id: str
     session_id: str
