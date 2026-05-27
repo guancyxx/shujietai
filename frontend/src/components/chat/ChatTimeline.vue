@@ -14,16 +14,16 @@ const { timelineScrollRef, onTimelineScroll } = useTimelineScroll()
       <span class="dispatch-task-id">{{ ss.dispatchActiveTask.id }}</span>
       <div class="dispatch-actions">
         <button v-if="ss.dispatchIsCancellable" type="button" class="dispatch-action-btn dispatch-cancel-btn" @click="ss.cancelDispatchTask">取消任务</button>
-        <button v-if="ss.dispatchIsResumable" type="button" class="dispatch-action-btn dispatch-resume-btn" @click="ss.clearActiveTask">关闭任务</button>
-        <button v-if="ss.dispatchActiveTask.status === 'completed' || ss.dispatchActiveTask.status === 'failed' || ss.dispatchActiveTask.status === 'cancelled'" type="button" class="dispatch-action-btn dispatch-close-btn" @click="ss.clearActiveTask">清除</button>
       </div>
     </div>
     <div v-if="ss.dispatchError" class="dispatch-friendly-error">{{ ss.dispatchError }}</div>
   </div>
 
   <div class="timeline-scroll scrollbar-themed" ref="timelineScrollRef" @scroll="onTimelineScroll">
-    <div v-if="ss.displayMessages.length === 0 && ss.dispatchTaskId && ss.dispatchActiveTask && ['queued','running','awaiting_input','paused'].includes(ss.dispatchActiveTask.status)" class="muted">⏳ 正在恢复任务进度，接入实时数据流中...</div>
-    <div v-else-if="ss.displayMessages.length === 0 && ss.dispatchTaskId" class="muted">📭 暂无执行记录</div>
+    <div v-if="ss.displayMessages.length === 0 && ss.dispatchRestoreState === 'loading'" class="muted">⏳ 正在恢复 dispatch 事件历史...</div>
+    <div v-else-if="ss.displayMessages.length === 0 && ss.dispatchRestoreState === 'missing'" class="muted">📭 {{ ss.dispatchRestoreMessage || '当前 dispatch 会话没有可恢复的事件历史。' }}</div>
+    <div v-else-if="ss.displayMessages.length === 0 && ss.dispatchRestoreState === 'error'" class="error">⚠️ {{ ss.dispatchRestoreMessage || '恢复 dispatch 事件失败。' }}</div>
+    <div v-else-if="ss.displayMessages.length === 0 && ss.selectedSessionHasDispatchHistory" class="muted">📭 暂无 dispatch 执行记录</div>
     <div v-else-if="ss.displayMessages.length === 0" class="muted">暂无消息</div>
     <div
       v-for="message in ss.displayMessages"

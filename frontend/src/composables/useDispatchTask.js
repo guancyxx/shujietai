@@ -227,10 +227,12 @@ async function createDispatchTask({
         })
       }
       taskEvents.value.sort((a, b) => {
+        const ta = new Date(a.created_at).getTime()
+        const tb = new Date(b.created_at).getTime()
+        if (ta !== tb) return ta - tb
         const seqA = Number.isFinite(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
         const seqB = Number.isFinite(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
-        if (seqA !== seqB) return seqA - seqB
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        return seqA - seqB
       })
     } catch {
       // If fetch fails, rely on WebSocket streaming only
