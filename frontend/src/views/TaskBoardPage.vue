@@ -1,8 +1,10 @@
 <script setup>
 import { useTaskStore } from '../stores/useTaskStore.js'
+import { useMarkdownRenderer } from '../composables/useMarkdownRenderer.js'
 import { onMounted } from 'vue'
 
 const ts = useTaskStore()
+const { renderMarkdown } = useMarkdownRenderer()
 const KANBAN_STATUSES = ['draft', 'pending_execution', 'in_progress', 'blocked', 'cancelled', 'completed']
 
 onMounted(async () => { await ts.loadTaskBoardItems() })
@@ -184,7 +186,7 @@ onMounted(async () => { await ts.loadTaskBoardItems() })
         </section>
         <section class="task-detail-section">
           <h4>描述</h4>
-          <div class="task-detail-markdown">{{ ts.taskBoardDetailItem.description || '暂无描述' }}</div>
+          <div class="task-detail-markdown" v-html="renderMarkdown(ts.taskBoardDetailItem.description || '暂无描述')"></div>
         </section>
         <section class="task-detail-section">
           <h4>关联</h4>

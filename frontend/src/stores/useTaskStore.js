@@ -352,6 +352,19 @@ export const useTaskStore = defineStore('task', () => {
   async function updateTaskBoardItemQuick(item, patch) {
     if (!item?.id || quickUpdatingTaskBoardItemId.value === item.id) return
     const ts = patch.status ?? item.status ?? 'draft'
+    // Prerequisite check for pending_execution / in_progress transitions
+    const gatedStatuses = ['pending_execution', 'in_progress']
+    if (gatedStatuses.includes(ts) && ts !== (item.status ?? 'draft')) {
+      const check = await checkTaskPrerequisites(item.id)
+      if (!check.all_satisfied) {
+        const names = check.checks
+          .filter(c => !c.satisfied)
+          .map(c => `「${c.task_name || c.task_id}」(状态: ${taskBoardStatusLabelMap[c.status] || c.status})`)
+          .join(', ')
+        useSessionStore().errorMessage = `前置任务未完成: ${names}`
+        return
+      }
+    }
     if (requiresTaskStatusReason(ts) && ts !== (item.status ?? 'draft') && !Object.prototype.hasOwnProperty.call(patch, 'status_reason')) {
       openTaskBoardEditModal({ ...item, status: ts, status_reason: '' })
       useSessionStore().errorMessage = `请先填写${taskBoardStatusLabelMap[ts] || ts}原因`
@@ -400,6 +413,15 @@ export const useTaskStore = defineStore('task', () => {
     } catch (e) {
       useSessionStore().errorMessage = e instanceof Error ? e.message : 'Unknown error'
     } finally { creatingTaskBoardItem.value = false }
+  }
+
+  async function checkTaskPrerequisites(taskId) {
+    if (!taskId) return { all_satisfied: true, checks: [] }
+    try {
+      return await fetchJson(`${apiBase}/api/v1/task-board/${encodeURIComponent(taskId)}/prerequisites-check`)
+    } catch {
+      return { all_satisfied: true, checks: [] }
+    }
   }
 
   async function submitEditTaskBoardItem() {
@@ -486,6 +508,7 @@ export const useTaskStore = defineStore('task', () => {
     updateTaskBoardItemQuick,
     handleTaskBoardDragStart, handleTaskBoardDragEnd, handleTaskBoardDrop, updateTaskBoardPriority,
     submitCreateTaskBoardItem, submitEditTaskBoardItem,
+    checkTaskPrerequisites,
     loadArchivedTasks, archiveTaskBoardItem, unarchiveTaskBoardItem, switchToTaskArchive,
     KANBAN_PRIORITY_LABELS,
   }

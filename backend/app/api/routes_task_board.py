@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from app.schemas import (
     TaskBoardCreateRequest,
     TaskBoardListResponse,
+    TaskBoardPrerequisiteCheckResponse,
     TaskBoardUpdateRequest,
 )
 from app.container import store
@@ -17,6 +18,18 @@ def list_task_board_items(
     keyword: str | None = Query(default=None),
 ) -> TaskBoardListResponse:
     return TaskBoardListResponse(items=store.list_task_board_items(project_id=project_id, keyword=keyword))
+
+
+@router.get("/api/v1/task-board/{task_id}/prerequisites-check", response_model=TaskBoardPrerequisiteCheckResponse)
+def check_prerequisites(task_id: str) -> TaskBoardPrerequisiteCheckResponse:
+    """Check whether upstream and parent task dependencies are completed."""
+    checks = store.check_prerequisites(task_id)
+    if not checks:
+        raise HTTPException(status_code=404, detail="task_board_item_not_found")
+    return TaskBoardPrerequisiteCheckResponse(
+        all_satisfied=all(c["satisfied"] for c in checks),
+        checks=checks,
+    )
 
 
 @router.post("/api/v1/task-board")

@@ -1,7 +1,9 @@
 <script setup>
 import { useTaskStore } from '../stores/useTaskStore.js'
+import { useMarkdownRenderer } from '../composables/useMarkdownRenderer.js'
 
 const ts = useTaskStore()
+const { renderMarkdown } = useMarkdownRenderer()
 </script>
 
 <template>
@@ -72,7 +74,7 @@ const ts = useTaskStore()
         </section>
         <section class="task-detail-section">
           <h4>描述</h4>
-          <p class="task-detail-desc">{{ ts.archiveDetailItem.description || '暂无描述' }}</p>
+          <p class="task-detail-desc" v-html="renderMarkdown(ts.archiveDetailItem.description || '暂无描述')"></p>
         </section>
         <section class="task-detail-section">
           <h4>时间</h4>

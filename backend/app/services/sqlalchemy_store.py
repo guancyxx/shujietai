@@ -586,6 +586,37 @@ class SqlAlchemySessionStore:
                 db.delete(entity)
                 return True
 
+    def check_prerequisites(self, task_id: str) -> list[dict]:
+        """Check upstream_task_id and parent_task_id dependencies for completion.
+        Returns a list of PrerequisiteCheckItem-compatible dicts."""
+        from typing import Literal, cast  # noqa: PLC0415
+        from app.schemas import PrerequisiteCheckItem  # noqa: PLC0415
+        with self._session_factory() as db:
+            entity = db.get(TaskBoardEntity, task_id)
+            if entity is None:
+                return []
+            checks: list[dict] = []
+            for dep_type_str, dep_id in [
+                ("upstream", entity.upstream_task_id),
+                ("parent", entity.parent_task_id),
+            ]:
+                dep_type = cast("Literal['upstream', 'parent']", dep_type_str)
+                if dep_id is None:
+                    checks.append(PrerequisiteCheckItem(
+                        dependency_type=dep_type,
+                        satisfied=True,
+                    ).model_dump())
+                    continue
+                dep_entity = db.get(TaskBoardEntity, dep_id)
+                checks.append(PrerequisiteCheckItem(
+                    dependency_type=dep_type,
+                    task_id=UUID(dep_id),
+                    task_name=dep_entity.name if dep_entity else None,
+                    status=dep_entity.status if dep_entity else None,
+                    satisfied=dep_entity is not None and dep_entity.status == "completed",
+                ).model_dump())
+            return checks
+
     def clear_sessions(self) -> int:
         with self._lock:
             with self._session_factory.begin() as db:

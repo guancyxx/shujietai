@@ -127,6 +127,14 @@ def process_pending_execution_once(
             worker_pool.start_task(existing)
             continue
 
+        # Prerequisite check: skip if upstream/parent tasks are not completed
+        if not dispatch_service.prerequisites_satisfied(item_id):
+            logger.warning(
+                "Skipping task_board_item=%s: prerequisites not satisfied (status=pending_execution)",
+                item_id,
+            )
+            continue
+
         task = dispatch_service.create_task_for_task_board_item(item_id)
         if task is None:
             continue

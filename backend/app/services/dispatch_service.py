@@ -268,6 +268,20 @@ class DispatchService:
             ).scalars().all()
             return [row for row in rows]
 
+    def prerequisites_satisfied(self, task_board_item_id: str) -> bool:
+        """Check whether a task-board item's upstream/parent dependencies are completed."""
+        with self._session_factory() as db:
+            entity = db.get(TaskBoardEntity, task_board_item_id)
+            if entity is None:
+                return True
+            for dep_id in (entity.upstream_task_id, entity.parent_task_id):
+                if dep_id is None:
+                    continue
+                dep = db.get(TaskBoardEntity, dep_id)
+                if dep is None or dep.status != "completed":
+                    return False
+            return True
+
     def mark_task_board_item_status(self, task_board_item_id: str, status: str) -> bool:
         with self._session_factory.begin() as db:
             entity = db.get(TaskBoardEntity, task_board_item_id)
