@@ -12,7 +12,7 @@ TaskBoardStatus = Literal["draft", "pending_execution", "in_progress", "blocked"
 MessageRole = Literal["user", "assistant", "system", "tool"]
 
 # Valid ai_platform values — must be kept in sync with connector registry
-VALID_AI_PLATFORMS = ("hermes",)
+VALID_AI_PLATFORMS = ("hermes", "claude-code")
 
 
 def validate_ai_platform(value: str | None) -> str | None:
