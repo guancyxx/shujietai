@@ -595,15 +595,52 @@ class DispatchWorkerPool:
         return True
 
     def interrupt_task(self, task_id: str, user_message: str) -> bool:
-        """Interrupt running worker and restart with user correction."""
+        """Interrupt running worker and restart with user correction.
+
+        Two paths:
+        1. Active worker exists (running/queued): set interrupt flag, cancel asyncio
+           task. The CancelledError handler in run() restarts with the correction.
+        2. No active worker (e.g. awaiting_input): record events, transition to
+           running, and launch a fresh worker with the full history.
+        """
+        # Path 1: active worker in pool
         entry = self._workers.get(task_id)
-        if entry is None:
+        if entry is not None:
+            atask, worker = entry
+            if not atask.done():
+                worker.interrupt(user_message)
+                atask.cancel()  # CancelledError triggers interrupt path in run()
+                return True
+
+        # Path 2: no active worker — task may be awaiting_input.
+        # Record corrections and start a new worker from the full history.
+        task = self._svc.get_task(task_id)
+        if task is None:
             return False
-        atask, worker = entry
-        if atask.done():
+        if task.status not in ("queued", "running", "awaiting_input"):
             return False
-        worker.interrupt(user_message)
-        atask.cancel()  # CancelledError triggers interrupt path in run()
+
+        # Record the interrupt correction as events
+        self._svc.add_event(
+            task_id,
+            "interrupted",
+            {"reason": "user_revise", "user_message": user_message},
+            event_name="task.interrupted",
+            status=task.status,
+        )
+        self._svc.add_event(
+            task_id,
+            "content_delta",
+            {"role": "user", "content": user_message},
+            event_name="message.user.delta",
+            status=task.status,
+        )
+
+        # Transition back to running and start a fresh worker
+        self._svc.transition_task(task_id, "running", emit_status_event=False)
+        refreshed = self._svc.start_new_run(task_id)
+        if refreshed is not None:
+            self.start_task(refreshed)
         return True
 
     def cancel_all(self) -> int:
