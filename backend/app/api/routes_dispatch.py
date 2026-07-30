@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.schemas import (
     DispatchCreateRequest,
+    DispatchContinueRequest,
     DispatchEventListResponse,
     DispatchResumeRequest,
     DispatchSessionResolutionResponse,
@@ -133,6 +134,32 @@ async def interrupt_dispatch_task(task_id: str, payload: InterruptRequest) -> Di
     # Return fresh task state
     updated = svc.get_task(task_id)
     return updated or task
+
+
+@router.post("/{task_id}/continue", response_model=DispatchTaskItem)
+async def continue_dispatch_task(task_id: str, payload: DispatchContinueRequest) -> DispatchTaskItem:
+    """Continue a completed dispatch task with a new user prompt.
+
+    Appends the prompt to the conversation history, creates a new run,
+    and transitions the task from 'completed' back to 'running'.
+    The worker will load the full conversation context (original +
+    new prompt) for the AI continuation.
+    """
+    svc = _get_dispatch_service()
+    lifecycle = _get_task_lifecycle_service()
+
+    task = svc.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="dispatch_task_not_found")
+    if task.status != "completed":
+        raise HTTPException(status_code=409, detail="dispatch_task_not_continuable")
+
+    task = svc.continue_task(task_id, payload.prompt)
+    if task is None:
+        raise HTTPException(status_code=409, detail="dispatch_task_continue_failed")
+
+    lifecycle.start_task_safe(task, task_board_item_id=task.task_board_item_id)
+    return task
 
 
 @router.post("/{task_id}/cancel", response_model=DispatchTaskItem)
