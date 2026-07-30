@@ -123,7 +123,7 @@ async def interrupt_dispatch_task(task_id: str, payload: InterruptRequest) -> Di
     task = svc.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="dispatch_task_not_found")
-    if task.status not in ("queued", "running"):
+    if task.status not in ("queued", "running", "awaiting_input"):
         raise HTTPException(status_code=409, detail="dispatch_task_not_interruptible")
 
     ok = pool.interrupt_task(task_id, payload.user_message)
