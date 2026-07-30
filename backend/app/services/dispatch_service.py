@@ -32,7 +32,7 @@ _TRANSITIONS: dict[str, set[str]] = {
     "running": {"completed", "failed", "awaiting_input", "paused", "cancelled", "aborted"},
     "awaiting_input": {"running", "cancelled", "aborted"},
     "paused": {"running", "cancelled", "aborted"},
-    "completed": set(),
+    "completed": {"running"},
     "failed": set(),  # terminal
     "cancelled": set(),  # terminal
     "aborted": set(),  # terminal
@@ -567,6 +567,33 @@ class DispatchService:
         """
         _ = user_message  # used in worker-issued events, kept for signature clarity
         return self.get_task(task_id)  # re-read from DB for freshness
+
+    # --- Continue (completed → running) ---
+
+    def continue_task(self, task_id: str, prompt: str) -> DispatchTaskItem | None:
+        """Continue a completed task with a new user prompt.
+
+        Appends the new prompt as a user event, creates a fresh run,
+        and transitions the task back to 'running'.
+        The worker will load the full conversation history (original +
+        new prompt) via reconstruct_history().
+        """
+        task = self.get_task(task_id)
+        if task is None:
+            return None
+        if task.status != "completed":
+            return None
+
+        self.add_event(
+            task_id,
+            "content_delta",
+            {"role": "user", "content": prompt},
+            event_name="message.user.delta",
+            status="running",
+            run_id=task.current_run_id,
+        )
+
+        return self.transition_task(task_id, "running", emit_status_event=False)
 
     def emergency_stop(self) -> int:
         """Cancel all running/queued tasks. Returns the number of cancelled tasks."""
