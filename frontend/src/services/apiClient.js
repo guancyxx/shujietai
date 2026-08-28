@@ -1,3 +1,5 @@
+import { authHeaders, handleUnauthorized } from './auth.js'
+
 export async function parseErrorDetail(response) {
   let detail = ''
   try {
@@ -39,54 +41,64 @@ export function mapApiError(status, detail) {
 async function parseJsonResponse(response) {
   if (!response.ok) {
     const detail = await parseErrorDetail(response)
+    if (response.status === 401) {
+      handleUnauthorized(detail)
+    }
     throw new Error(mapApiError(response.status, detail))
   }
   return response.json()
 }
 
+function authedInit(init = {}) {
+  return {
+    ...init,
+    headers: { ...(init.headers || {}), ...authHeaders() },
+  }
+}
+
 export async function fetchJson(url) {
-  return parseJsonResponse(await fetch(url))
+  return parseJsonResponse(await fetch(url, authedInit()))
 }
 
 export async function postJson(url, payload) {
-  return parseJsonResponse(await fetch(url, {
+  return parseJsonResponse(await fetch(url, authedInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }))
+  })))
 }
 
 export async function postJsonTimeout(url, payload, timeoutMs) {
   const controller = new AbortController()
   const id = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await parseJsonResponse(await fetch(url, {
+    return await parseJsonResponse(await fetch(url, authedInit({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: controller.signal,
-    }))
+    })))
   } finally {
     clearTimeout(id)
   }
 }
 
 export async function putJson(url, payload) {
-  return parseJsonResponse(await fetch(url, {
+  return parseJsonResponse(await fetch(url, authedInit({
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }))
+  })))
 }
 
 export async function patchJson(url, payload) {
-  return parseJsonResponse(await fetch(url, {
+  return parseJsonResponse(await fetch(url, authedInit({
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }))
+  })))
 }
 
 export async function deleteJson(url) {
-  return parseJsonResponse(await fetch(url, { method: 'DELETE' }))
+  return parseJsonResponse(await fetch(url, authedInit({ method: 'DELETE' })))
 }

@@ -2,6 +2,7 @@
 // Independent of the active-task composable (useDispatchTask).
 
 import { ref, computed } from 'vue'
+import { authHeaders } from '../services/auth.js'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 
@@ -28,7 +29,7 @@ async function fetchTaskHistory(status = '') {
     const params = new URLSearchParams()
     if (status) params.set('status', status)
     const url = `${apiBase}/api/v1/dispatch${params.toString() ? '?' + params.toString() : ''}`
-    const response = await fetch(url)
+    const response = await fetch(url, { headers: authHeaders() })
     if (!response.ok) throw new Error(`Request failed: ${response.status}`)
     const data = await response.json()
     allTasks.value = data.tasks || data || []
@@ -40,7 +41,7 @@ async function fetchTaskHistory(status = '') {
 }
 
 async function fetchTaskEvents(taskId) {
-  const response = await fetch(`${apiBase}/api/v1/dispatch/${taskId}/events`)
+  const response = await fetch(`${apiBase}/api/v1/dispatch/${taskId}/events`, { headers: authHeaders() })
   if (!response.ok) throw new Error(`Request failed: ${response.status}`)
   return response.json()
 }

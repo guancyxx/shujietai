@@ -3,6 +3,7 @@
 
 import { ref, computed } from 'vue'
 import { useWebSocket } from './useWebSocket.js'
+import { authHeaders } from '../services/auth.js'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 
@@ -135,7 +136,7 @@ function handleTaskStatus(data) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url)
+  const response = await fetch(url, { headers: authHeaders() })
   if (!response.ok) throw new Error(`Request failed: ${response.status}`)
   return response.json()
 }
@@ -143,7 +144,7 @@ async function fetchJson(url) {
 async function postJson(url, payload) {
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(payload),
   })
   if (!response.ok) {

@@ -2,6 +2,7 @@
 // Manages a single persistent WebSocket connection, subscriptions, and event dispatching.
 
 import { ref, onUnmounted, readonly } from 'vue'
+import { getToken, clearSession } from '../services/auth.js'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
 const wsBase = apiBase.replace(/^http/, 'ws')
@@ -47,7 +48,11 @@ function connect() {
     return
   }
 
-  const url = `${wsBase}/api/v1/ws`
+  // M1 auth: WS 需携带 query param token；无 token 不发起连接（由路由守卫去登录）
+  const token = getToken()
+  if (!token) return
+
+  const url = `${wsBase}/api/v1/ws?token=${encodeURIComponent(token)}`
   const ws = new WebSocket(url)
 
   ws.onopen = () => {
@@ -58,9 +63,15 @@ function connect() {
     flushPendingMessages()
   }
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     connected.value = false
     socket.value = null
+    if (event?.code === 4401) {
+      // M1 auth: token 失效被服务端拒绝 —— 清会话，停止重连，由守卫跳登录
+      clearSession()
+      window.location.hash = '#/login'
+      return
+    }
     scheduleReconnect()
   }
 

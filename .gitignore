@@ -40,3 +40,6 @@ redis_data/
 
 # Local temporary artifacts
 tmp/
+
+# Local planning/handoff notes
+plans/
