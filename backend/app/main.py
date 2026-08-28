@@ -161,7 +161,9 @@ app = FastAPI(
     title="ShuJieTai API",
     version="0.1.0",
     lifespan=lifespan,
-    dependencies=[Depends(require_user)],
+    # 注意：认证依赖不放 app 级 —— app 级 dependencies 会注入 WebSocket 路由，
+    # 而 require_user(request: Request) 在 WS 场景拿不到 Request 会 TypeError。
+    # 改为每个 HTTP router include 时注入；WS 走 routes_ws.py 自身的 token 校验。
 )
 
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173")
@@ -178,15 +180,17 @@ app.add_middleware(
 from app.api.routes_dispatch import router as dispatch_router
 from app.api.routes_ws import router as ws_router
 
+# M1 auth: HTTP 路由统一挂 require_user（auth 自身豁免 PUBLIC_PATHS）；WS router 不挂
+_auth_dep = [Depends(require_user)]
 app.include_router(auth_router)
-app.include_router(dispatch_router)
+app.include_router(dispatch_router, dependencies=_auth_dep)
 app.include_router(ws_router)
-app.include_router(hermes_router)
-app.include_router(skills_router)
-app.include_router(system_router)
-app.include_router(projects_router)
-app.include_router(task_board_router)
-app.include_router(sessions_router)
+app.include_router(hermes_router, dependencies=_auth_dep)
+app.include_router(skills_router, dependencies=_auth_dep)
+app.include_router(system_router, dependencies=_auth_dep)
+app.include_router(projects_router, dependencies=_auth_dep)
+app.include_router(task_board_router, dependencies=_auth_dep)
+app.include_router(sessions_router, dependencies=_auth_dep)
 
 
 @app.middleware("http")

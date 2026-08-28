@@ -33,8 +33,9 @@ def auth_client(tmp_path):
         session.commit()
 
     app.state.auth_session_factory = factory
-    # 不带自动注入的 Authorization 头 —— 显式构造裸 client
-    client = TestClient(app, headers={})
+    # conftest 的 monkeypatch 会给所有 TestClient 合并 auth 头；
+    # 裸 client 用显式空 Authorization 覆盖（None 会被合并逻辑跳过）
+    client = TestClient(app, headers={"Authorization": ""})
     try:
         yield client
     finally:
@@ -95,23 +96,34 @@ def test_expired_token_401(auth_client):
 
 
 def test_ws_without_token_rejected(auth_client):
-    with pytest.raises(Exception):
-        # 无 token：服务端 accept 后立即 close(4401)，客户端在 receive 时会抛错
-        with auth_client.websocket_connect("/api/v1/ws"):
-            pass
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect):
+        with auth_client.websocket_connect("/api/v1/ws") as ws:
+            # 服务端 accept 后立即 close(4401)——首次 receive 应抛 WebSocketDisconnect
+            ws.receive_text()
 
 
 def test_ws_with_garbage_token_rejected(auth_client):
-    with pytest.raises(Exception):
-        with auth_client.websocket_connect("/api/v1/ws?token=garbage.token.here"):
-            pass
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect):
+        with auth_client.websocket_connect("/api/v1/ws?token=garbage.token.here") as ws:
+            ws.receive_text()
 
 
 def test_ws_with_valid_token_accepted(auth_client):
     token = create_access_token("admin", is_admin=True)
-    with auth_client.websocket_connect(f"/api/v1/ws?token={token}") as ws:
-        ws.send_text('{"action": "subscribe_task", "task_id": "dt_probe"}')
-        # 无异常即视为连接建立并被接受（task 不存在时服务端回复 error 也属正常业务）
+    # TestClient 不触发 lifespan → state.ws_manager 不存在；直接注入
+    from app.container import ws_manager as _ws_manager
+
+    app.state.ws_manager = _ws_manager
+    try:
+        with auth_client.websocket_connect(f"/api/v1/ws?token={token}") as ws:
+            ws.send_text('{"action": "subscribe_task", "task_id": "dt_probe"}')
+            # 无异常即视为连接建立并被接受（task 不存在时服务端回复 error 也属正常业务）
+    finally:
+        app.state.ws_manager = None
 
 
 def test_logout_endpoint_requires_token(auth_client):
