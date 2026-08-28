@@ -1,10 +1,13 @@
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useSessionStore } from './stores/useSessionStore.js'
 import { useTaskStore } from './stores/useTaskStore.js'
 import { useProjectStore } from './stores/useProjectStore.js'
 import { useConfigStore } from './stores/useConfigStore.js'
+import { fetchJson } from './services/apiClient.js'
+import { authHeaders, clearSession, getUsername } from './services/auth.js'
+import { useWebSocket } from './composables/useWebSocket.js'
 
 import CreateConversationModal from './components/modals/CreateConversationModal.vue'
 import ProjectCreateModal from './components/modals/ProjectCreateModal.vue'
@@ -22,6 +25,31 @@ const ss = useSessionStore()
 const ts = useTaskStore()
 const ps = useProjectStore()
 const cs = useConfigStore()
+const { disconnect: disconnectWs } = useWebSocket()
+
+// M1 auth: 顶栏用户区
+const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const currentUsername = ref(getUsername())
+
+async function loadCurrentUser() {
+  try {
+    const me = await fetchJson(`${apiBase}/api/auth/me`)
+    currentUsername.value = me.username || me.display_name || ''
+  } catch {
+    // 401 已由拦截器处理；其余错误静默（顶栏回退 localStorage 用户名）
+  }
+}
+
+async function logout() {
+  try {
+    await fetch(`${apiBase}/api/auth/logout`, { method: 'POST', headers: authHeaders() })
+  } catch {
+    // 登出端点失败不阻塞前端登出（JWT 无状态）
+  }
+  clearSession()
+  disconnectWs()
+  router.push({ name: 'login' })
+}
 
 function switchToTaskArchive() {
   router.push('/task-archive')
@@ -36,6 +64,7 @@ function openTaskBoardByProject(_project) {
 onMounted(async () => {
   ss.wsConnect()
   ss.errorMessage = ''
+  loadCurrentUser()
   try {
     await Promise.all([ss.loadSessions(), ps.loadProjects(), ts.loadTaskBoardItems(), ps.loadGithubRepos(), cs.loadSystemConfig()])
     await ss.loadSessionData()
@@ -95,6 +124,11 @@ onUnmounted(() => { ss.clearActiveTask() })
             <span class="top-nav-btn-icon" aria-hidden="true">📋</span>
             <span class="top-nav-btn-label">调度历史</span>
           </router-link>
+
+          <span v-if="currentUsername" class="topbar-user">
+            <span class="topbar-user-name" :title="currentUsername">👤 {{ currentUsername }}</span>
+            <button class="topbar-logout-btn" type="button" @click="logout">登出</button>
+          </span>
         </nav>
       </header>
 

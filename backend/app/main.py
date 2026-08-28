@@ -4,7 +4,7 @@ import os
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.container import (
@@ -13,6 +13,7 @@ from app.container import (
 )
 from app.services.retry_worker import RetryWorkerConfig, run_retry_loop
 from app.services.pending_execution_worker import PendingExecutionWorkerConfig, run_pending_execution_loop
+from app.auth import require_user
 
 from app.api.routes_hermes import router as hermes_router
 from app.api.routes_skills import router as skills_router
@@ -20,6 +21,7 @@ from app.api.routes_system import router as system_router
 from app.api.routes_projects import router as projects_router
 from app.api.routes_task_board import router as task_board_router
 from app.api.routes_sessions import router as sessions_router
+from app.api.routes_auth import router as auth_router
 
 
 def _build_retry_worker_config() -> RetryWorkerConfig:
@@ -68,6 +70,14 @@ async def lifespan(app_instance: FastAPI):
     app_instance.state.worker_pool = worker_pool
     app_instance.state.task_lifecycle_service = lifecycle_service
     app_instance.state.ws_manager = ws_manager
+
+    # M1 auth: seed admin user on first startup (SQL backends only)
+    from app.services.user_service import seed_admin_user
+
+    auth_session_factory = getattr(store, "session_factory", None)  # type: ignore[attr-defined]
+    if auth_session_factory is not None:
+        app_instance.state.auth_session_factory = auth_session_factory
+        seed_admin_user(getattr(auth_session_factory, "kw", {}).get("bind"))
 
     retry_task = None
     if retry_service is not None:
@@ -147,7 +157,12 @@ async def lifespan(app_instance: FastAPI):
                 pass
 
 
-app = FastAPI(title="ShuJieTai API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="ShuJieTai API",
+    version="0.1.0",
+    lifespan=lifespan,
+    dependencies=[Depends(require_user)],
+)
 
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173")
 origins = [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
@@ -163,6 +178,7 @@ app.add_middleware(
 from app.api.routes_dispatch import router as dispatch_router
 from app.api.routes_ws import router as ws_router
 
+app.include_router(auth_router)
 app.include_router(dispatch_router)
 app.include_router(ws_router)
 app.include_router(hermes_router)

@@ -21,6 +21,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.services.ws_manager import WsManager
+from app.auth import reject_websocket, validate_ws_token
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,11 @@ router = APIRouter(tags=["websocket"])
 
 @router.websocket("/api/v1/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
+    # M1 auth: 连接时校验 query param token，失败则以 4401 关闭
+    claims = await validate_ws_token(websocket)
+    if claims is None:
+        await reject_websocket(websocket)
+        return
     await websocket.accept()
     ws_manager: WsManager = websocket.app.state.ws_manager
     subscribed_tasks: set[str] = set()

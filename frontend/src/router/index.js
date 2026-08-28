@@ -8,8 +8,12 @@ import ModelConfigPage from '../views/ModelConfigPage.vue'
 import SystemConfigPage from '../views/SystemConfigPage.vue'
 import DispatchHistoryPage from '../views/DispatchHistoryPage.vue'
 import SkillsCatalogPage from '../views/SkillsCatalogPage.vue'
+import LoginPage from '../views/LoginPage.vue'
+
+import { getToken, setUnauthorizedHandler } from '../services/auth.js'
 
 const routes = [
+  { path: '/login', name: 'login', component: LoginPage, meta: { public: true } },
   { path: '/', name: 'chat', component: ChatPage },
   { path: '/projects', name: 'projects', component: ProjectsPage },
   { path: '/task-board', name: 'task-board', component: TaskBoardPage },
@@ -23,6 +27,22 @@ const routes = [
 const router = createRouter({
   history: createWebHashHistory(),
   routes,
+})
+
+// M1 auth: 全局守卫 —— 无 JWT 一律跳 /login（保留目标路径，登录后回跳）
+router.beforeEach((to) => {
+  if (to.meta.public) return true
+  if (!getToken()) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  return true
+})
+
+// 401 拦截回调：任何请求返回 401（token 失效/过期）时清 token 跳登录
+setUnauthorizedHandler(() => {
+  if (router.currentRoute.value.name !== 'login') {
+    router.push({ name: 'login' })
+  }
 })
 
 export default router

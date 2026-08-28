@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
 from app.db.base import Base
+from app.db.user_model import UserEntity  # noqa: F401 — re-exported so alembic env picks it up
 
 
 class SessionEntity(Base):

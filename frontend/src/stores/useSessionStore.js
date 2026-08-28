@@ -5,6 +5,7 @@ import { useDispatchTask } from '../composables/useDispatchTask.js'
 import { useMarkdownRenderer } from '../composables/useMarkdownRenderer.js'
 import { useTimelineScroll } from '../composables/useTimelineScroll.js'
 import { fetchJson, postJson } from '../services/apiClient.js'
+import { authHeaders } from '../services/auth.js'
 import { DISPATCH_EVENT_LABEL_MAP, ROLE_LABEL_MAP } from '../constants/appConstants.js'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
@@ -324,7 +325,7 @@ export const useSessionStore = defineStore('session', () => {
     deletingSessionId.value = sessionId
     errorMessage.value = ''
     try {
-      const res = await fetch(`${apiBase}/api/v1/sessions/${sessionId}`, { method: 'DELETE' })
+      const res = await fetch(`${apiBase}/api/v1/sessions/${sessionId}`, { method: 'DELETE', headers: authHeaders() })
       if (!res.ok) throw new Error(`Request failed: ${res.status}`)
       if (selectedSessionId.value === sessionId) {
         selectedSessionId.value = ''
@@ -350,7 +351,7 @@ export const useSessionStore = defineStore('session', () => {
     clearingSessions.value = true
     errorMessage.value = ''
     try {
-      const res = await fetch(`${apiBase}/api/v1/sessions`, { method: 'DELETE' })
+      const res = await fetch(`${apiBase}/api/v1/sessions`, { method: 'DELETE', headers: authHeaders() })
       if (!res.ok) throw new Error(`Request failed: ${res.status}`)
       selectedSessionId.value = ''
       selectedExternalSessionId.value = ''
