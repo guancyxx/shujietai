@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { fetchJson } from '../services/apiClient.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 const skillsCatalog = ref(null)
 const skillsCatalogLoading = ref(false)

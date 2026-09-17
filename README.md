@@ -48,6 +48,12 @@ http://localhost:15173
 
 http://localhost:18000/api/v1/health
 
+## Production Deployment
+
+Production runs on the NAS behind the cloud nginx TLS entry (`sjt.guancyxx.cn`),
+decoupled from this dev compose — see [deploy/README.md](deploy/README.md)
+(prod compose, nginx configs, marker-gated auto-deploy, ops runbook).
+
 ## Runtime Ports (default)
 
 - frontend: 15173 -> container 5173

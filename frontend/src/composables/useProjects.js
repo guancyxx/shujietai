@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { deleteJson, fetchJson, patchJson, postJson, putJson } from '../services/apiClient.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 export function useProjects() {
   const projects = ref([])

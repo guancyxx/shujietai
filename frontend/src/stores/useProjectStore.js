@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { fetchJson, postJson, patchJson, deleteJson } from '../services/apiClient.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 export const useProjectStore = defineStore('project', () => {
   const projects = ref([])

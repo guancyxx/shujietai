@@ -28,7 +28,7 @@ const cs = useConfigStore()
 const { disconnect: disconnectWs } = useWebSocket()
 
 // M1 auth: 顶栏用户区
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 const currentUsername = ref(getUsername())
 
 async function loadCurrentUser() {

@@ -8,7 +8,7 @@ import { fetchJson, postJson } from '../services/apiClient.js'
 import { authHeaders } from '../services/auth.js'
 import { DISPATCH_EVENT_LABEL_MAP, ROLE_LABEL_MAP } from '../constants/appConstants.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 export const useSessionStore = defineStore('session', () => {
   // --- State ---
