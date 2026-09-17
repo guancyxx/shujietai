@@ -66,13 +66,19 @@ NAS `/etc/crontab` 追加（DSM 升级可能重写 crontab，丢了按此重建�
 `up -d` → 30×2s 健康检查 → 全绿才推进 marker；失败 marker 不动下轮重试。
 **merged ≈ live（≤15 分钟）**。
 
-## 二、首次部署 — galen 侧（云服务器，红线内）
+## 二、首次部署 — galen 侧（云服务器）
 
-1. **DNS**：`sjt.guancyxx.cn` A 记录 → `132.232.249.122`
-2. **证书**：TrustAsia 给 `sjt.guancyxx.cn` 签发（流程同 tasks.guancyxx.cn），
-   放到 `/etc/nginx/ssl/sjt.guancyxx.cn/{fullchain,privkey}.pem`
-   （路径不同则同步改 `deploy/nginx/sjt.guancyxx.cn.conf`）
-3. **vhost**（配置已在仓 `deploy/nginx/sjt.guancyxx.cn.conf`）：
+1. **DNS**：`sjt.guancyxx.cn` A 记录 → `132.232.249.122`（✅ 2026-09-17 已生效）
+2. **证书**：certbot (Let's Encrypt) 自动签发 + `certbot.timer` 续期，与同机
+   git.guancyxx.cn 同模式（✅ 已签，有效期至 2026-12-16）：
+
+```bash
+sudo certbot certonly --nginx -d sjt.guancyxx.cn --non-interactive --agree-tos
+```
+
+   如日后想统一换成 TrustAsia（tasks/guancyxx.cn 的手工上传模式）：下载
+   `sjt.guancyxx.cn_bundle.pem` + `.key` 放 `/etc/nginx/ssl/`，改 vhost 证书路径后 reload。
+3. **vhost**（配置在仓 `deploy/nginx/sjt.guancyxx.cn.conf`，✅ 已安装）：
 
 ```bash
 sudo cp deploy/nginx/sjt.guancyxx.cn.conf /etc/nginx/sites-available/sjt.guancyxx.cn
