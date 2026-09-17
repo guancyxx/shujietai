@@ -11,7 +11,7 @@ import { useSessionStore } from './useSessionStore.js'
 import { useProjectStore } from './useProjectStore.js'
 import { buildTaskTree, countTaskTreeNodes, getTaskPriority, makeTaskNodeKey } from '../services/taskBoardTree.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 export const useTaskStore = defineStore('task', () => {
   // --- Task Board ---

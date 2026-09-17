@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { postJson } from '../services/apiClient.js'
 import { setSession } from '../services/auth.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 const route = useRoute()
 const router = useRouter()

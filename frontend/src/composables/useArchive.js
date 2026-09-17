@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { fetchJson, patchJson } from '../services/apiClient.js'
 import { KANBAN_PRIORITY_LABELS, TASK_BOARD_STATUS_LABEL_MAP } from '../constants/appConstants.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 export function useArchive() {
   const archivedTaskItems = ref([])

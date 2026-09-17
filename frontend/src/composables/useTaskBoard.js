@@ -11,7 +11,7 @@ import {
   TASK_BOARD_STATUS_OPTIONS,
 } from '../constants/appConstants.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 export function useTaskBoard(projectsRef) {
   const taskBoardItems = ref([])

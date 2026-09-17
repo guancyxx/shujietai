@@ -1,0 +1,104 @@
+# ShuJieTai 生产栈（NAS 部署，参照 taskdeck/博客拓扑：容器全部落在 NAS，
+# 云 nginx 只做 TLS 入口反代）。与根目录开发 compose 的区别：
+#   - 前端 = vite build 产物 nginx 静态托管 + /api 同域反代（不再跑 vite dev）
+#   - 后端 = 镜像内置代码（无 bind mount）、启动前自动 alembic 迁移、无 --reload
+#   - 不挂载宿主机 hermes（NAS 无 hermes；桥接地址经 .env.prod 注入）
+#   - 全服务 restart + healthcheck，防静默死
+#
+# 用法（仓库根目录）：
+#   docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml up -d --build
+# 秘钥经 deploy/.env.prod 注入（模板见 deploy/.env.prod.example，不入 git）。
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shujietai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shujietai}
+      POSTGRES_USER: ${POSTGRES_USER:-shujietai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env.prod}
+    volumes:
+      - shujietai_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shujietai} -d ${POSTGRES_DB:-shujietai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: shujietai-redis
+    restart: unless-stopped
+    volumes:
+      - shujietai_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: shujietai-backend
+    restart: unless-stopped
+    working_dir: /app
+    entrypoint: ["/bin/sh", "/app/docker-entrypoint.sh"]
+    # 生产不带 --reload；单 worker（WS 广播走进程内存，多 worker 会断事件推送）
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      SHUJIE_RUN_MIGRATIONS: "1"
+      PYTHONPATH: /app
+      SHUJIE_JWT_SECRET: ${SHUJIE_JWT_SECRET:?set in deploy/.env.prod}
+      SHUJIE_ADMIN_PASSWORD: ${SHUJIE_ADMIN_PASSWORD:-}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-shujietai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-shujietai}
+      SESSION_STORE_BACKEND: sqlalchemy
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: "8000"
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://sjt.guancyxx.cn}
+      HERMES_API_BASE_URL: ${HERMES_API_BASE_URL:-}
+      HERMES_API_KEY: ${HERMES_API_KEY:-}
+      HERMES_MODEL: ${HERMES_MODEL:-gpt-5.3-codex}
+      HERMES_API_TIMEOUT_SECONDS: ${HERMES_API_TIMEOUT_SECONDS:-120}
+      INGEST_RETRY_ENABLED: "true"
+    healthcheck:
+      # ProxyHandler({}) 显式禁代理：Docker Desktop 会把宿主机代理注入容器，
+      # urllib 走代理访问 127.0.0.1 会 502
+      test: ["CMD", "python3", "-c", "import urllib.request;urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8000/api/v1/health',timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.prod
+      args:
+        # 留空 = 与页面同源（相对路径 /api + WS 从 location 推导），彻底消灭 CORS
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    container_name: shujietai-frontend
+    restart: unless-stopped
+    ports:
+      - "${SJT_WEB_PORT:-8400}:80"
+    volumes:
+      - ./nginx/sjt-frontend.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  shujietai_postgres_data:
+  shujietai_redis_data:

@@ -1,0 +1,18 @@
+# ShuJieTai 前端生产镜像：vite build 产物由 nginx 静态托管（替换 vite dev 容器）。
+# 同域反代：页面与 /api 同源，VITE_API_BASE_URL 留空 = 相对路径请求 + WS 从 location 推导。
+FROM node:20-alpine AS build
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci || npm install
+
+COPY . .
+ARG VITE_API_BASE_URL=""
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+# 站点配置由 compose 从 deploy/nginx/sjt-frontend.conf 挂载到
+# /etc/nginx/conf.d/default.conf（改配置无需重建镜像）
+EXPOSE 80

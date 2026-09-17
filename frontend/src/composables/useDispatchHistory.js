@@ -4,7 +4,7 @@
 import { ref, computed } from 'vue'
 import { authHeaders } from '../services/auth.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 const allTasks = ref([])
 const historyLoading = ref(false)

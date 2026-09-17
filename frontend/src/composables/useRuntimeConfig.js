@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { fetchJson, putJson } from '../services/apiClient.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 /**
  * Runtime configuration composable — model / skill / MCP selection state.

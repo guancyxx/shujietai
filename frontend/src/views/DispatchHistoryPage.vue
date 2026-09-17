@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useDispatchHistory } from '../composables/useDispatchHistory.js'
 import { useSessionStore } from '../stores/useSessionStore.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 const dh = useDispatchHistory()
 const ss = useSessionStore()

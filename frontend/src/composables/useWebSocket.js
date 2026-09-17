@@ -4,8 +4,12 @@
 import { ref, onUnmounted, readonly } from 'vue'
 import { getToken, clearSession } from '../services/auth.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
-const wsBase = apiBase.replace(/^http/, 'ws')
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
+// VITE_API_BASE_URL="" 表示与页面同源（生产 nginx 同域反代）；WebSocket 构造器
+// 要求绝对地址，须从 location 推导 ws/wss
+const wsBase = apiBase
+  ? apiBase.replace(/^http/, 'ws')
+  : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
 
 const socket = ref(null)
 const connected = ref(false)

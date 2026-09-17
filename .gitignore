@@ -24,6 +24,7 @@ build/
 .env
 .env.*
 !.env.example
+!deploy/.env.prod.example
 
 # IDE
 .vscode/

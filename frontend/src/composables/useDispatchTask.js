@@ -5,7 +5,7 @@ import { ref, computed } from 'vue'
 import { useWebSocket } from './useWebSocket.js'
 import { authHeaders } from '../services/auth.js'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:18000'
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:18000'
 
 // Active dispatch task for the current chat session
 const activeTaskId = ref(null)
